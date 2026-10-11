@@ -404,7 +404,8 @@ except Exception: pass
 PY
 )
     [[ -n "$pid" && "$held_source" == "$source" && "$held_id" == "$id" && "$request" =~ ^[A-Za-z0-9._-]+$ ]] || return 0
-    actual="$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^ *//')"
+    start="$(printf '%s\n' "$start" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    actual="$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     if [[ -z "$actual" || "$actual" != "$start" ]]; then rm -f -- "$hold"; continue; fi
     return 0
   done
@@ -417,8 +418,9 @@ reserve_hold() {
   [[ -d "$dir" && ! -L "$dir" && -f "$dir/source-root" && ! -L "$dir/source-root" ]] || return 2
   IFS= read -r recorded < "$dir/source-root"
   [[ "$recorded" == "$source" ]] || return 2
-  actual="$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^ *//')"
-  [[ "$actual" == "$started" ]] || return 2
+  started="$(printf '%s\n' "$started" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  actual="$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  [[ -n "$actual" && "$actual" == "$started" ]] || return 2
   hold="$dir/resume-hold-$request.json"; [[ ! -e "$hold" && ! -L "$hold" ]] || return 2
   tmp="$(mktemp "$dir/.resume-hold.XXXXXX")" || return 2
   python3 - "$tmp" "$pid" "$started" "$source" "$id" "$request" <<'PY'
