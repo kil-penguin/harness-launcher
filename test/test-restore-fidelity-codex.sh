@@ -17,13 +17,13 @@ mkdir -p "$HARNESS/config" "$BIN" "$HARNESS/.harness/codex/sessions/2026/09/30"
 print -r -- 'HARNESS_NAME="test"' 'HARNESS_PREFIX="test"' > "$HARNESS/config/launcher.env"
 PY="$(source "$LAUNCHER_DIR/bin/harness-common.sh"; harness_python3_resolve)"
 REAL_CODEX="$(command -v codex 2>/dev/null || true)"
-cp "$LAUNCHER_DIR/bin/harness-restore-probe" "$LAUNCHER_DIR/bin/harness-launch-record" "$BIN/"
+cp "$LAUNCHER_DIR/bin/harness-restore-probe" "$LAUNCHER_DIR/bin/harness-launch-record" "$LAUNCHER_DIR/bin/harness_launch_plan.py" "$BIN/"
 
 cat > "$BIN/codex" <<'STUB'
 #!/usr/bin/env bash
 {
   for arg in "$@"; do printf 'ARG:%s\n' "$arg"; done
-  for v in HARNESS_HOST_DEFAULT_MODE HARNESS_LAUNCH_APPROVAL HARNESS_LAUNCH_SANDBOX HARNESS_LAUNCH_BYPASS HARNESS_LAUNCH_SOURCE_ROOT HARNESS_LAUNCH_ISOLATED HARNESS_LAUNCH_PROFILE HARNESS_LAUNCH_NESTED HARNESS_CODEX_CONTEXT; do
+  for v in HARNESS_HOST_DEFAULT_MODE HARNESS_LAUNCH_APPROVAL HARNESS_LAUNCH_SANDBOX HARNESS_LAUNCH_NETWORK HARNESS_LAUNCH_BYPASS HARNESS_LAUNCH_SOURCE_ROOT HARNESS_LAUNCH_ISOLATED HARNESS_LAUNCH_PROFILE HARNESS_LAUNCH_NESTED HARNESS_CODEX_CONTEXT; do
     printf 'ENV:%s=%s\n' "$v" "${!v-<unset>}"
   done
 } > "$TEST_STUB_FILE"
@@ -249,4 +249,10 @@ run_codex "$OUT" HARNESS_HOST_DEFAULT_MODE=base -- --passthrough resume $ID
 [[ "$(argv_line "$OUT")" == *"-a never -s danger-full-access resume $ID "*  ]] || fail 'M1 herdr restore must reapply the grant' "$OUT"
 echo 'PASS: X12 nested launches are flagged; a herdr restore stays top-level'
 
+write_record $ID HARNESS_LAUNCH_APPROVAL=never HARNESS_LAUNCH_SANDBOX=workspace-write HARNESS_LAUNCH_NETWORK=enabled
+run_codex "$OUT" -- --passthrough resume $ID
+has_arg "$OUT" sandbox_workspace_write.network_access=true || fail 'network grant not restored' "$OUT"
+[[ "$(env_of "$OUT" HARNESS_LAUNCH_NETWORK)" == enabled ]] || fail 'restored network not exported to hook' "$OUT"
+run_codex "$OUT" HARNESS_LAUNCH_NETWORK=enabled -- base
+[[ "$(env_of "$OUT" HARNESS_LAUNCH_NETWORK)" == '<unset>' ]] || fail 'inherited network leaked' "$OUT"
 echo 'PASS: Codex restore fidelity'

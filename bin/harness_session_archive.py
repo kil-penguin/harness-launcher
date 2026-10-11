@@ -362,7 +362,7 @@ def _grant(path, owner_id, source_root, state):
     fields = dict(line.split('=', 1) for line in done.stdout.splitlines() if '=' in line)
     if fields.get('source_root') != str(source_root.resolve()) or fields.get('harness_session_id', '').lower() != owner_id.lower():
         return None
-    allowed = ('permission', 'approval', 'sandbox', 'bypass', 'profile', 'context')
+    allowed = ('permission', 'approval', 'sandbox', 'network', 'bypass', 'profile', 'context')
     return {'native_id': native_id, **{key: fields[key] for key in allowed if key in fields}}
 
 
@@ -383,10 +383,11 @@ def _fsync_tree(directory):
 def _valid_grants(grants):
     if not isinstance(grants, dict) or set(grants) != {'codex'} or not isinstance(grants['codex'], list) or len(grants['codex']) > MAX_FILES:
         raise ArchiveError('invalid archive grant proof')
-    allowed = {'native_id','permission','approval','sandbox','bypass','profile','context'}
+    allowed = {'native_id','permission','approval','sandbox','network','bypass','profile','context'}
     choices = {'permission':('default','acceptEdits','plan','auto','dontAsk','bypassPermissions'),
                'approval':('untrusted','on-failure','on-request','never'),
                'sandbox':('read-only','workspace-write','danger-full-access'),
+               'network':('disabled','enabled'),
                'bypass':('1',),'profile':('fast','base','sol','astra','plan','rich'),'context':('272k','1m')}
     seen = set()
     for grant in grants['codex']:

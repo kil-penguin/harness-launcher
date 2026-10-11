@@ -19,6 +19,80 @@ SPEC.loader.exec_module(launch_plan)
 
 
 class LaunchPlanTest(unittest.TestCase):
+    def test_network_overrides_require_exact_booleans_and_obey_later_overrides(self) -> None:
+        resolve = launch_plan.network_from_overrides
+        key = "sandbox_workspace_write.network_access="
+        self.assertEqual(resolve([key + "true"]), "enabled")
+        self.assertEqual(resolve([key + "true", key + "false"]), "disabled")
+        self.assertEqual(resolve([key + "false", key + "true"]), "enabled")
+        for later in (key + '"true"', key + "1", key + "bad", "sandbox_workspace_write={network_access=false}", '"sandbox_workspace_write"={network_access=false}', '"sandbox_workspace_write".network_access=false'):
+            self.assertEqual(resolve([key + "true", later]), "")
+        self.assertEqual(resolve([key + "true", "model_reasoning_effort=\"high\""]), "enabled")
+
+    def test_workspace_network_is_explicit_and_bound_to_the_plan_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            presets = [{"id": "base", "label": "Base", "model": "fixture-model", "effort": "medium"}]
+            plans = [launch_plan.plan(source, "codex", "base", presets,
+                     options={"sandbox": "workspace-write", "network": network})
+                     for network in ("enabled", "disabled")]
+        for network, result in zip(("enabled", "disabled"), plans):
+            self.assertEqual(result["summary"]["network"], network)
+            self.assertIn("sandbox_workspace_write.network_access=" + ("true" if network == "enabled" else "false"), result["args"])
+            self.assertEqual(result["args"][result["args"].index("-s") + 1], "workspace-write")
+        self.assertNotEqual(plans[0]["digest"], plans[1]["digest"])
+
+    def test_network_never_silently_selects_a_filesystem_sandbox(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            presets = [{"id": "base", "label": "Base", "model": "fixture-model", "effort": "medium"}]
+            with self.assertRaisesRegex(launch_plan.PlanError, "explicit_sandbox_required"):
+                launch_plan.plan(source, "codex", "base", presets, options={"network": "enabled"})
+            with self.assertRaisesRegex(launch_plan.PlanError, "unsupported_network_sandbox"):
+                launch_plan.plan(source, "codex", "base", presets, options={"sandbox": "read-only", "network": "enabled"})
+            with self.assertRaisesRegex(launch_plan.PlanError, "unsupported_network"):
+                launch_plan.plan(source, "claude", "base", presets, options={"network": "enabled"})
+
+    def test_full_access_network_is_enabled_and_cannot_claim_to_be_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            presets = [{"id": "base", "label": "Base", "model": "fixture-model", "effort": "medium"}]
+            result = launch_plan.plan(source, "codex", "base", presets, options={"sandbox": "danger-full-access"})
+            with self.assertRaisesRegex(launch_plan.PlanError, "unsupported_network_sandbox"):
+                launch_plan.plan(source, "codex", "base", presets, options={"sandbox": "danger-full-access", "network": "disabled"})
+        self.assertEqual(result["summary"]["network"], "enabled")
+
+    def test_inherited_permissions_are_unknown_without_changing_native_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            presets = [{"id": "base", "label": "Base", "model": "fixture-model", "effort": "medium"}]
+            result = launch_plan.plan(source, "codex", "base", presets)
+            capability = launch_plan.capabilities(source, "codex", presets)
+        self.assertEqual(result["args"], ["codex", "base", "--passthrough"])
+        self.assertEqual(result["summary"]["sandbox"], "unknown")
+        self.assertEqual(result["summary"]["network"], "unknown")
+        self.assertEqual(capability["networks"], ["enabled", "disabled"])
+
+    def test_trusted_network_grant_is_restored_on_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve()
+            owner = "11111111-2222-4333-8444-555555555555"
+            result = launch_plan.plan(source, "codex", "base",
+                [{"id": "base", "label": "Base", "model": "fixture-model", "effort": "medium"}],
+                session={"native_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "action": "resume", "runtime": "codex", "launcher_session_id": owner, "source_root": str(source), "native_home": "/private/owner-home", "archived": False},
+                grant={"source_root": str(source), "isolated": "1", "harness_session_id": owner, "approval": "never", "sandbox": "workspace-write", "network": "enabled"})
+        self.assertTrue(result["can_launch"])
+        self.assertEqual(result["summary"]["network"], "enabled")
+        self.assertIn("sandbox_workspace_write.network_access=true", result["args"])
+
+    def test_fork_cannot_inherit_an_unverified_workspace_network_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve()
+            session = {"native_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "action": "fork", "runtime": "codex", "launcher_session_id": None, "source_root": str(source), "native_home": "/private/old-home", "archived": False}
+            result = launch_plan.plan(source, "codex", "base", [{"id": "base", "label": "Base", "model": "fixture-model", "effort": "medium"}], options={"approval": "never", "sandbox": "workspace-write"}, session=session)
+        self.assertFalse(result["can_launch"])
+        self.assertEqual(result["reason"], "explicit_network_required")
+
     def test_claude_context_summary_preserves_native_preset_alias(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source=Path(directory)

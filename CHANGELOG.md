@@ -2,6 +2,12 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.53.0 — 2026-10-11
+
+- Add explicit Codex command-network choices independently of approval and filesystem access. Workspace-write plans emit exact network booleans; full access permits networking and rejects a conflicting disabled selection. Omitted settings retain Native defaults and preview as unverified.
+- Preserve launcher-owned network grants in private records, archives and exact resumes. Nested launches cannot raise network authority. Forks require an explicit choice when the previous workspace policy is unknown.
+- Advertise optional network capabilities so Web callers can check an older immutable bound runtime before accepting or preserving a network selection.
+
 ## 0.52.0 — 2026-10-10
 
 - Keep source-local Native Codex history outside disposable Git session roots.

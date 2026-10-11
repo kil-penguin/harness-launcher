@@ -9,6 +9,7 @@ import os
 import re
 import stat
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +20,10 @@ EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 CLAUDE_PERMISSIONS = ("default", "acceptEdits", "dontAsk", "plan", "bypassPermissions")
 CODEX_APPROVALS = ("on-request", "never")
 CODEX_SANDBOXES = ("read-only", "workspace-write", "danger-full-access")
-SETTING_KEYS = frozenset({"model", "effort", "context", "permission", "approval", "sandbox"})
+CODEX_NETWORKS = ("enabled", "disabled")
+SETTING_KEYS = frozenset({"model", "effort", "context", "permission", "approval", "sandbox", "network"})
 SESSION_KEYS = frozenset({"native_id", "action", "runtime", "launcher_session_id", "source_root", "native_home", "archived"})
-GRANT_KEYS = frozenset({"permission", "approval", "sandbox", "bypass", "source_root", "isolated", "harness_session_id", "context", "grant_provenance"})
+GRANT_KEYS = frozenset({"permission", "approval", "sandbox", "network", "bypass", "source_root", "isolated", "harness_session_id", "context", "grant_provenance"})
 
 
 class PlanError(ValueError):
@@ -30,6 +32,27 @@ class PlanError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def network_from_overrides(overrides: list[str]) -> str:
+    """Recognize only the exact network boolean; ambiguous replacements clear it."""
+    selected = ""
+    for override in overrides:
+        key, separator, value = override.partition("=")
+        key = key.strip()
+        if "sandbox_workspace_write" not in key:
+            continue
+        if key == "sandbox_workspace_write.network_access" and separator:
+            selected = ""
+            try:
+                parsed = tomllib.loads("value=" + value)["value"]
+            except (tomllib.TOMLDecodeError, KeyError):
+                continue
+            if type(parsed) is bool:
+                selected = "enabled" if parsed else "disabled"
+        elif key.replace('"', '').replace("'", '') == "sandbox_workspace_write" or "network_access" in key:
+            selected = ""
+    return selected
 
 
 def _fail(code: str) -> None:
@@ -154,7 +177,7 @@ def _capabilities(source: Path, runtime: str, presets: list[dict]) -> dict[str, 
         "permissions": [], "approvals": [], "sandboxes": [],
     }
     if runtime == "codex":
-        result.update({"approvals": ['on-request'] if _slack_approval_required(root) else list(CODEX_APPROVALS), "sandboxes": list(CODEX_SANDBOXES)})
+        result.update({"approvals": ['on-request'] if _slack_approval_required(root) else list(CODEX_APPROVALS), "sandboxes": list(CODEX_SANDBOXES), "networks": list(CODEX_NETWORKS)})
     else:
         result["permissions"] = list(CLAUDE_PERMISSIONS)
     return result
@@ -216,6 +239,7 @@ def _grant(grant: dict | None, session: dict[str, Any] | None, source: Path) -> 
         "permission": result.get("permission") in CLAUDE_PERMISSIONS,
         "approval": result.get("approval") in CODEX_APPROVALS,
         "sandbox": result.get("sandbox") in CODEX_SANDBOXES,
+        "network": result.get("network") in CODEX_NETWORKS,
         "bypass": result.get("bypass") == "1",
         "context": result.get("context") in ("272k", "1m"),
     }
@@ -234,6 +258,8 @@ def _grant(grant: dict | None, session: dict[str, Any] | None, source: Path) -> 
 
 def _permission_selection(runtime: str, options: dict[str, str], grant: dict[str, str] | None, has_session: bool) -> tuple[dict[str, str], bool]:
     if runtime == "claude":
+        if "network" in options:
+            _fail("unsupported_network")
         if "approval" in options:
             _fail("unsupported_approval")
         if "sandbox" in options:
@@ -258,6 +284,25 @@ def _permission_selection(runtime: str, options: dict[str, str], grant: dict[str
     selected = {key: value for key, value in selected.items() if value}
     missing = has_session and set(selected) != {"approval", "sandbox"}
     return selected, missing
+
+
+def _network_selection(options: dict[str, str], grant: dict[str, str] | None, permissions: dict[str, str]) -> str:
+    explicit = options.get("network")
+    if explicit is not None and explicit not in CODEX_NETWORKS:
+        _fail("unsupported_network")
+    sandbox = "danger-full-access" if permissions.get("bypass") == "1" else permissions.get("sandbox")
+    # A saved network policy only applies to the sandbox it was granted with.
+    saved = (grant or {}).get("network") if sandbox == (grant or {}).get("sandbox") else None
+    selected = explicit or saved
+    if sandbox == "danger-full-access":
+        if explicit == "disabled":
+            _fail("unsupported_network_sandbox")
+        return "enabled"
+    if selected and not sandbox:
+        _fail("explicit_sandbox_required")
+    if selected and sandbox != "workspace-write":
+        _fail("unsupported_network_sandbox")
+    return selected or "unknown"
 
 
 def _session_args(runtime: str, session: dict[str, Any] | None) -> list[str]:
@@ -306,15 +351,23 @@ def plan(source: Path, runtime: str, preset: str, presets: list[dict], options: 
         if selected_options.get('approval')=='never':_fail('unsupported_approval')
         if permissions.pop('bypass',None)=='1':permissions['sandbox']='danger-full-access'
         permissions['approval']='on-request'
+    network = _network_selection(selected_options, selected_grant, permissions) if runtime == 'codex' else None
+    blocked_reason = 'explicit_permission_required'
+    if selected_session and selected_session['action'] == 'fork' and runtime == 'codex' and permissions.get('sandbox') == 'workspace-write' and network == 'unknown':
+        blocked = True
+        blocked_reason = 'explicit_network_required'
     summary: dict[str, Any] = {"model": model, "effort": effort, "context": context}
     summary.update(permissions)
     if summary.pop('bypass',None)=='1':summary.update(approval='never',sandbox='danger-full-access')
+    if runtime == 'codex':
+        summary.setdefault('sandbox', 'unknown')
+        summary['network'] = network
     if selected_session:
         summary["action"] = selected_session["action"]
     selection = {"runtime": runtime, "preset": preset, "options": selected_options, "session": selected_session, "summary": summary}
     digest = _digest(root, capability, selection, selected_grant)
     if blocked:
-        return {"args": [], "summary": summary, "digest": digest, "can_launch": False, "reason": "explicit_permission_required"}
+        return {"args": [], "summary": summary, "digest": digest, "can_launch": False, "reason": blocked_reason}
     args = (["codex", preset] if runtime == "codex" else [preset])
     if runtime == "codex" and ("context" in selected_options or selected_session):
         args.append(context)
@@ -335,10 +388,15 @@ def plan(source: Path, runtime: str, preset: str, presets: list[dict], options: 
                 args.extend(("-a", permissions["approval"]))
             if "sandbox" in permissions:
                 args.extend(("-s", permissions["sandbox"]))
+        if permissions.get("sandbox") == "workspace-write" and network in CODEX_NETWORKS:
+            args.extend(("-c", "sandbox_workspace_write.network_access=" + ("true" if network == "enabled" else "false")))
     return {"args": args, "summary": summary, "digest": digest, "can_launch": True}
 
 
 def _main(argv: list[str]) -> int:
+    if len(argv) >= 2 and argv[1] == "network-grant":
+        print(network_from_overrides(argv[2:]))
+        return 0
     if len(argv) != 2 or argv[1] not in ("capabilities", "plan"):
         print(json.dumps({"error": "usage"}), file=sys.stderr)
         return 2

@@ -123,12 +123,13 @@ class SessionArchiveTest(unittest.TestCase):
             raw.write_text('{"type":"session_meta","payload":{"id":"%s"}}\n' % native)
             records = state / 'launch-records'; records.mkdir(parents=True)
             record = records / ('codex-' + native)
-            record.write_text('profile=base\nsource_root=%s\nisolated=1\nharness_session_id=%s\n' % (source.resolve(), owner))
+            record.write_text('profile=base\nsandbox=workspace-write\nnetwork=enabled\nsource_root=%s\nisolated=1\nharness_session_id=%s\n' % (source.resolve(), owner))
             archive(root=root, state=state, owner_id=owner, source_root=source)
             record.write_text('profile=astra\nsource_root=%s\nisolated=1\nharness_session_id=%s\n' % (source.resolve(), owner))
 
             manifest = verify(archive=state / 'archives' / owner, owner_id=owner, source_root=source)
             self.assertEqual(manifest['grant_provenance']['codex'][0]['profile'], 'base')
+            self.assertEqual(manifest['grant_provenance']['codex'][0]['network'], 'enabled')
 
     def test_archive_persists_valid_native_restore_selection_and_reuses_only_matching_selection(self):
         from harness_session_archive import archive, verify, ArchiveError
