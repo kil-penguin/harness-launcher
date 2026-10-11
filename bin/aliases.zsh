@@ -458,7 +458,7 @@ _harness_launcher_restore_launch_record() {
   local agent="$1" id="$2" source_root="$3" py out line key value recorded=""
   local helper="$_HARNESS_LAUNCHER_BIN/harness-launch-record"
   local state_home="${HARNESS_SESSION_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher}"
-  restore_permission="" restore_approval="" restore_sandbox="" restore_bypass="" restore_isolated="" restore_profile="" restore_window=""
+  restore_permission="" restore_approval="" restore_sandbox="" restore_network="" restore_bypass="" restore_isolated="" restore_profile="" restore_window=""
   [[ -f "$helper" ]] || return 1
   py="$(harness_python3_resolve 2>/dev/null)" || return 1
   out="$(HARNESS_SESSION_STATE_HOME="$state_home" "$py" "$helper" read "$agent" "$id" 2>/dev/null)" || return 1
@@ -469,6 +469,7 @@ _harness_launcher_restore_launch_record() {
       permission) [[ "$agent" == claude && "$value" == (default|acceptEdits|plan|auto|dontAsk|bypassPermissions) ]] && restore_permission="$value" ;;
       approval) [[ "$agent" == codex && "$value" == (untrusted|on-failure|on-request|never) ]] && restore_approval="$value" ;;
       sandbox) [[ "$agent" == codex && "$value" == (read-only|workspace-write|danger-full-access) ]] && restore_sandbox="$value" ;;
+      network) [[ "$agent" == codex && "$value" == (enabled|disabled) ]] && restore_network="$value" ;;
       bypass) [[ "$agent" == codex && "$value" == 1 ]] && restore_bypass=1 ;;
       profile) [[ "$agent" == codex && "$value" == (fast|base|sol|astra|plan|rich) ]] && restore_profile="$value" ;;
       context) [[ "$agent" == claude && "$value" == 1m ]] && restore_window=1m ;;
@@ -477,7 +478,7 @@ _harness_launcher_restore_launch_record() {
     esac
   done
   if [[ -z "$recorded" || "${recorded:A}" != "${source_root:A}" ]]; then
-    restore_permission="" restore_approval="" restore_sandbox="" restore_bypass="" restore_isolated="" restore_profile="" restore_window=""
+    restore_permission="" restore_approval="" restore_sandbox="" restore_network="" restore_bypass="" restore_isolated="" restore_profile="" restore_window=""
     return 1
   fi
   return 0
@@ -1902,7 +1903,7 @@ _harness_launcher_codex_restore_apply() {
     argv=(resume "${codex_args[1]}")
   fi
   local restore_id restore_model restore_effort restore_context
-  local restore_permission restore_approval restore_sandbox restore_bypass restore_isolated restore_profile
+  local restore_permission restore_approval restore_sandbox restore_network restore_bypass restore_isolated restore_profile
   local hint=false
   restore_id="$(_harness_launcher_restore_resume_id codex "${argv[@]}")" || return 0
   _harness_launcher_restore_probe codex "$restore_id" || true
@@ -1926,6 +1927,11 @@ _harness_launcher_codex_restore_apply() {
   else
     [[ -z "$restore_approval" ]] || codex_restore_args+=(-a "$restore_approval")
     [[ -z "$restore_sandbox" ]] || codex_restore_args+=(-s "$restore_sandbox")
+    if [[ "$restore_sandbox" == workspace-write && -n "$restore_network" ]]; then
+      local network_bool=false
+      [[ "$restore_network" != enabled ]] || network_bool=true
+      codex_restore_args+=(-c "sandbox_workspace_write.network_access=$network_bool")
+    fi
   fi
   return 0
 }
@@ -1933,12 +1939,13 @@ _harness_launcher_codex_restore_apply() {
 # _harness_launcher_codex_launch_grant [codex args...]
 #   Sets the caller's launch_approval, launch_sandbox and launch_bypass to the
 #   grant the final Codex flags carry (later flags win; bypass replaces both).
-#   Only launcher-visible flags count, never config overrides or profile
-#   contents, so a session launched on profile defaults records no grant.
+#   Only launcher-visible flags and the exact workspace network boolean count;
+#   profile defaults and other config overrides never grant authority.
 _harness_launcher_codex_launch_grant() {
   local -a argv=("$@")
-  local i arg
-  launch_approval="" launch_sandbox="" launch_bypass=""
+  local i arg py
+  local -a network_overrides=()
+  launch_approval="" launch_sandbox="" launch_network="" launch_bypass=""
   for (( i = 1; i <= ${#argv}; i++ )); do
     arg="${argv[i]}"
     case "$arg" in
@@ -1951,6 +1958,9 @@ _harness_launcher_codex_launch_grant() {
       -s|--sandbox) launch_sandbox="${argv[i+1]-}"; (( i++ )) ;;
       --sandbox=*) launch_sandbox="${arg#--sandbox=}" ;;
       -s?*) launch_sandbox="${arg#-s}" ;;
+      -c|--config) network_overrides+=("${argv[i+1]-}"); (( i++ )) ;;
+      --config=*) network_overrides+=("${arg#--config=}") ;;
+      -c?*) network_overrides+=("${arg#-c}") ;;
       -*) if harness_codex_option_takes_value "$arg"; then (( i++ )); fi ;;
     esac
   done
@@ -1958,6 +1968,12 @@ _harness_launcher_codex_launch_grant() {
   [[ "$launch_sandbox" == (read-only|workspace-write|danger-full-access) ]] || launch_sandbox=""
   if [[ -n "$launch_bypass" ]]; then
     launch_approval="" launch_sandbox=""
+    launch_network=enabled
+  elif [[ "$launch_sandbox" == danger-full-access ]]; then
+    launch_network=enabled
+  elif [[ "$launch_sandbox" == workspace-write && ${#network_overrides} -gt 0 ]]; then
+    py="$(harness_python3_resolve 2>/dev/null)" || return 0
+    launch_network="$("$py" "$_HARNESS_LAUNCHER_BIN/harness_launch_plan.py" network-grant "${network_overrides[@]}" 2>/dev/null)" || launch_network=""
   fi
   return 0
 }
@@ -2000,7 +2016,7 @@ _harness_launcher_run_codex_cli() {
   local freeform=false
   local passthrough=false context_explicit=false
   local -a codex_args=() codex_passthrough_args=() codex_restore_args=()
-  local launch_approval="" launch_sandbox="" launch_bypass="" launch_profile=""
+  local launch_approval="" launch_sandbox="" launch_network="" launch_bypass="" launch_profile=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -2214,15 +2230,15 @@ _harness_launcher_run_codex_cli() {
   _harness_launcher_announce_run_dir "${caller_run_dir:-$run_dir}"
   if [[ -n "$subcmd" ]]; then
     harness_codex_cmux_broker_start "$_HARNESS_LAUNCHER_BIN/codex-cmux-title-sync.py"
-    (cd "$run_dir" && _harness_launcher_export_launch_env "$launch_approval" "$launch_sandbox" "$launch_bypass" "$launch_profile" \
+    (cd "$run_dir" && _harness_launcher_export_launch_env "$launch_approval" "$launch_sandbox" "$launch_bypass" "$launch_profile" "$launch_network" \
       && "${launch_cmd[@]}" "$subcmd" "${codex_head[@]}" "${codex_args[@]}" "${codex_passthrough_args[@]}")
   elif $use_happy; then
     harness_codex_cmux_broker_start "$_HARNESS_LAUNCHER_BIN/codex-cmux-title-sync.py"
-    (cd "$run_dir" && _harness_launcher_export_launch_env "$launch_approval" "$launch_sandbox" "$launch_bypass" "$launch_profile" \
+    (cd "$run_dir" && _harness_launcher_export_launch_env "$launch_approval" "$launch_sandbox" "$launch_bypass" "$launch_profile" "$launch_network" \
       && "${launch_cmd[@]}" "${codex_args[@]}" "${codex_passthrough_args[@]}")
   else
     harness_codex_cmux_broker_start "$_HARNESS_LAUNCHER_BIN/codex-cmux-title-sync.py"
-    (cd "$run_dir" && _harness_launcher_export_launch_env "$launch_approval" "$launch_sandbox" "$launch_bypass" "$launch_profile" \
+    (cd "$run_dir" && _harness_launcher_export_launch_env "$launch_approval" "$launch_sandbox" "$launch_bypass" "$launch_profile" "$launch_network" \
       && "${launch_cmd[@]}" "${codex_head[@]}" "${codex_args[@]}" "${codex_passthrough_args[@]}")
   fi
   local rc=$?

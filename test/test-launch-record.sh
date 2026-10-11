@@ -143,6 +143,23 @@ read_rec codex 01a0ef50-1bec-7852-afb3-a6b6559f47b8
 [[ "$OUT" == $'source_root=/srv/harness\nisolated=0' ]] || fail "M3 unknown profile kept: [$OUT]"
 
 # --- silent no-ops ---------------------------------------------------------------
+NETWORK_ID=01a0ef50-1bec-7852-afb3-a6b6559f47c0
+PSARGS=(--pstable "$CLEAN" --start-pid 1000)
+rec codex "$(event SessionStart startup $NETWORK_ID)" HARNESS_LAUNCH_NETWORK=disabled HARNESS_LAUNCH_SANDBOX=workspace-write HARNESS_LAUNCH_SOURCE_ROOT=/srv/harness HARNESS_LAUNCH_ISOLATED=0
+read_rec codex "$NETWORK_ID"
+[[ "$OUT" == *'network=disabled'* ]] || fail 'network grant not recorded'
+PSARGS=(--pstable "$NESTED_CODEX" --start-pid 1000)
+rec codex "$(event SessionStart resume $NETWORK_ID)" HARNESS_LAUNCH_NETWORK=enabled HARNESS_LAUNCH_SANDBOX=workspace-write HARNESS_LAUNCH_SOURCE_ROOT=/srv/harness HARNESS_LAUNCH_ISOLATED=0
+read_rec codex "$NETWORK_ID"
+[[ "$OUT" == *'network=disabled'* && "$OUT" != *'network=enabled'* ]] || fail 'nested launch escalated network'
+PSARGS=(--pstable "$CLEAN" --start-pid 1000)
+rec codex "$(event SessionStart resume $NETWORK_ID)" HARNESS_LAUNCH_NETWORK=enabled HARNESS_LAUNCH_SANDBOX=workspace-write HARNESS_LAUNCH_SOURCE_ROOT=/srv/harness HARNESS_LAUNCH_ISOLATED=0
+PSARGS=(--pstable "$NESTED_CODEX" --start-pid 1000)
+rec codex "$(event SessionStart resume $NETWORK_ID)" HARNESS_LAUNCH_NETWORK=disabled HARNESS_LAUNCH_SANDBOX=workspace-write HARNESS_LAUNCH_SOURCE_ROOT=/srv/harness HARNESS_LAUNCH_ISOLATED=0
+read_rec codex "$NETWORK_ID"
+[[ "$OUT" == *'network=disabled'* ]] || fail 'nested launch could not lower network'
+PSARGS=(--pstable "$CLEAN" --start-pid 1000)
+
 before="$(ls "$STATE/launch-records" | wc -l | tr -d ' ')"
 noop() { # <label> <agent> <json> [ENV...] [-- args]
   local label="$1"; shift

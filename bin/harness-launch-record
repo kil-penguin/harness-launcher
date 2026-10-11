@@ -46,13 +46,15 @@ RANKS = {
     "permission": ["plan", "dontAsk", "default", "acceptEdits", "auto", "bypassPermissions"],
     "approval": ["untrusted", "on-failure", "on-request", "never"],
     "sandbox": ["read-only", "workspace-write", "danger-full-access"],
+    "network": ["disabled", "enabled"],
 }
 PROFILES = {"fast", "base", "sol", "astra", "plan", "rich"}
-GRANT_KEYS = ("permission", "approval", "sandbox", "bypass", "profile")
+GRANT_KEYS = ("permission", "approval", "sandbox", "network", "bypass", "profile")
 CHECKS = {
     "permission": lambda v: v in RANKS["permission"],
     "approval": lambda v: v in RANKS["approval"],
     "sandbox": lambda v: v in RANKS["sandbox"],
+    "network": lambda v: v in RANKS["network"],
     "bypass": lambda v: v == "1",
     "profile": lambda v: v in PROFILES,
     "source_root": lambda v: v.startswith("/") and not re.search(r"[\x00-\x1f\x7f]", v),
@@ -61,10 +63,11 @@ CHECKS = {
     # Not a grant (it only sizes the context window), so no rank rules apply.
     "context": lambda v: v == "1m",
 }
-ORDER = ("permission", "approval", "sandbox", "bypass", "profile",
+ORDER = ("permission", "approval", "sandbox", "network", "bypass", "profile",
          "source_root", "isolated", "harness_session_id", "context")
 ENV_KEYS = {
     "approval": "HARNESS_LAUNCH_APPROVAL", "sandbox": "HARNESS_LAUNCH_SANDBOX",
+    "network": "HARNESS_LAUNCH_NETWORK",
     "bypass": "HARNESS_LAUNCH_BYPASS", "profile": "HARNESS_LAUNCH_PROFILE",
     "source_root": "HARNESS_LAUNCH_SOURCE_ROOT", "isolated": "HARNESS_LAUNCH_ISOLATED",
     "harness_session_id": "HARNESS_SESSION_ID",

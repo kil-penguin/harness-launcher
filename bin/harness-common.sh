@@ -191,7 +191,7 @@ harness_launch_source_root() {
   (cd -P -- "$HARNESS_DIR" 2>/dev/null && pwd -P) || printf '%s\n' "$HARNESS_DIR"
 }
 
-# harness_launch_record_export_codex <source-root> <approval> <sandbox> <bypass> <profile>
+# harness_launch_record_export_codex <source-root> <approval> <sandbox> <bypass> <profile> [network]
 #   Codex only; run in the process that execs the agent. Exports the grant and
 #   profile it is launched with, its source root and isolation, for the
 #   launch-record hook (its hooks.json row is static, so it reads the
@@ -199,11 +199,12 @@ harness_launch_source_root() {
 #   Claude does not use this: its hook takes the same facts as arguments,
 #   because Claude applies an agent-writable `env` block from settings.
 harness_launch_record_export_codex() {
-  unset HARNESS_LAUNCH_PERMISSION HARNESS_LAUNCH_APPROVAL HARNESS_LAUNCH_SANDBOX HARNESS_LAUNCH_BYPASS HARNESS_LAUNCH_PROFILE
+  unset HARNESS_LAUNCH_PERMISSION HARNESS_LAUNCH_APPROVAL HARNESS_LAUNCH_SANDBOX HARNESS_LAUNCH_NETWORK HARNESS_LAUNCH_BYPASS HARNESS_LAUNCH_PROFILE
   [ -z "$2" ] || export HARNESS_LAUNCH_APPROVAL="$2"
   [ -z "$3" ] || export HARNESS_LAUNCH_SANDBOX="$3"
   [ -z "$4" ] || export HARNESS_LAUNCH_BYPASS="$4"
   [ -z "$5" ] || export HARNESS_LAUNCH_PROFILE="$5"
+  [ -z "${6:-}" ] || export HARNESS_LAUNCH_NETWORK="$6"
   export HARNESS_LAUNCH_SOURCE_ROOT="$1"
   export HARNESS_LAUNCH_ISOLATED=0
   [ -z "${HARNESS_SESSION_ROOT:-}" ] || HARNESS_LAUNCH_ISOLATED=1
