@@ -2,6 +2,10 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.53.1 — 2026-10-11
+
+- Normalize process-start timestamp padding at the resume-hold boundary. Web resumes using Python's stripped timestamp now match macOS `ps` output, and previously stored padded holds still protect their original live process. PID reuse checks retain the exact timestamp comparison.
+
 ## 0.53.0 — 2026-10-11
 
 - Add explicit Codex command-network choices independently of approval and filesystem access. Workspace-write plans emit exact network booleans; full access permits networking and rejects a conflicting disabled selection. Omitted settings retain Native defaults and preview as unverified.

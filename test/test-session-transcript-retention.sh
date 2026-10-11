@@ -62,19 +62,40 @@ ID="$(printf '%s\n' "$OUT" | sed -n 's/^HARNESS_SESSION_ID=//p')";WORK="$(printf
 mkdir -p "$WORK/.harness/codex/sessions"
 printf '{"type":"session_meta","payload":{"id":"%s"}}\n' "$NATIVE" > "$WORK/.harness/codex/sessions/$NATIVE.jsonl"
 "$ROOT/bin/session-isolation.sh" close "$ID"
-START="$(ps -o lstart= -p "$$" | sed 's/^ *//')"
+# Web's Python boundary strips ps padding. Force macOS-style trailing padding
+# on every platform so both normalized callers and older stored holds are covered.
+export HARNESS_TEST_REAL_PS="$(command -v ps)"
+mkdir "$TMP/bin"
+cat > "$TMP/bin/ps" <<'SH'
+#!/usr/bin/env bash
+"$HARNESS_TEST_REAL_PS" "$@" | sed 's/^[[:space:]]*//;s/[[:space:]]*$/    /'
+SH
+chmod +x "$TMP/bin/ps"
+export PATH="$TMP/bin:$PATH"
+START="$(ps -o lstart= -p "$$" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 python3 - "$HARNESS_SESSION_STATE_HOME/sessions/$ID/resume-hold-test.json" "$ID" "$TMP/source" "$$" "$START" <<'PY'
 import json,sys
 from pathlib import Path
-Path(sys.argv[1]).write_text(json.dumps({'pid':int(sys.argv[4]),'start':sys.argv[5],'source_root':sys.argv[3],'session_id':sys.argv[2],'request_id':'test-request'}))
+Path(sys.argv[1]).write_text(json.dumps({'pid':int(sys.argv[4]),'start':sys.argv[5]+'    ','source_root':sys.argv[3],'session_id':sys.argv[2],'request_id':'test-request'}))
 PY
 "$ROOT/bin/session-isolation.sh" gc
 [[ -d "$WORK" ]] || { echo 'FAIL: a verified live resume hold must retain the root'; exit 1; }
+[[ -f "$HARNESS_SESSION_STATE_HOME/sessions/$ID/resume-hold-test.json" ]] || { echo 'FAIL: old padded live holds must not be removed as stale'; exit 1; }
 "$ROOT/bin/session-isolation.sh" release-hold "$ID" test-request
 [[ ! -e "$HARNESS_SESSION_STATE_HOME/sessions/$ID/resume-hold-test-request.json" ]] || { echo 'FAIL: release-hold must remove only its own private hold'; exit 1; }
 "$ROOT/bin/session-isolation.sh" reserve-hold "$ID" test-reserved "$$" "$START" "$TMP/source"
 [[ -f "$HARNESS_SESSION_STATE_HOME/sessions/$ID/resume-hold-test-reserved.json" ]] || { echo 'FAIL: reserve-hold must publish a validated owner hold'; exit 1; }
+python3 - "$HARNESS_SESSION_STATE_HOME/sessions/$ID/resume-hold-test-reserved.json" "$START" <<'PY'
+import json,sys
+assert json.load(open(sys.argv[1]))['start'] == sys.argv[2]
+PY
 "$ROOT/bin/session-isolation.sh" release-hold "$ID" test-reserved
+"$ROOT/bin/session-isolation.sh" reserve-hold "$ID" test-padded "$$" "  $START    " "$TMP/source"
+"$ROOT/bin/session-isolation.sh" release-hold "$ID" test-padded
+if "$ROOT/bin/session-isolation.sh" reserve-hold "$ID" test-empty-start 2147483647 '    ' "$TMP/source"; then
+  echo 'FAIL: whitespace-only time and missing PID must not authorize a hold'; exit 1
+fi
+[[ ! -e "$HARNESS_SESSION_STATE_HOME/sessions/$ID/resume-hold-test-empty-start.json" ]] || { echo 'FAIL: rejected reservation must not publish a hold'; exit 1; }
 printf '{not json}\n' > "$HARNESS_SESSION_STATE_HOME/sessions/$ID/resume-hold-invalid.json"
 "$ROOT/bin/session-isolation.sh" gc
 [[ -d "$WORK" ]] || { echo 'FAIL: an invalid hold must fail closed and retain the root'; exit 1; }
