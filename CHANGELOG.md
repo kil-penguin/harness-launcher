@@ -2,6 +2,10 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.53.2 — 2026-10-12
+
+- Classify the top-level entries that long-lived Native Codex homes now contain, so a canonical `codex resume <id>` no longer refuses with `unknown top-level native artifact`. Execpolicy `rules/`, Native app/daemon/tool state and interrupted `mktemp` siblings of generated files are excluded and never copied; generic `sqlite/` and `tui-luna-reserve/` qualify only with their known content, and any other unknown name still holds. Content changes in that state no longer hold a snapshot; an entry appearing or disappearing still does. `external_agent_session_imports.json` is preserved with history.
+
 ## 0.53.1 — 2026-10-11
 
 - Normalize process-start timestamp padding at the resume-hold boundary. Web resumes using Python's stripped timestamp now match macOS `ps` output, and previously stored padded holds still protect their original live process. PID reuse checks retain the exact timestamp comparison.

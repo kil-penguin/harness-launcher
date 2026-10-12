@@ -20,7 +20,7 @@ import uuid
 import functools
 
 
-FILE_NAMES = {"history.jsonl", "session_index.jsonl"}
+FILE_NAMES = {"history.jsonl", "session_index.jsonl", "external_agent_session_imports.json"}
 DIRECTORIES = {"sessions", "archived_sessions", "logs_2", "goals_1", "memories_1",
                "queue_1", "shell_snapshots", "generated_images", "attachments", "memories", "log"}
 EXCLUDED = {"auth.json", "config.toml", "hooks.json", "skills", "plugins",
@@ -29,6 +29,19 @@ EXCLUDED = {"auth.json", "config.toml", "hooks.json", "skills", "plugins",
             ".sqlite-maintenance.lock", "thread-writer-locks", "mcp-oauth-locks",
             ".surface-quarantine", "tmp", ".tmp", "models_cache.json", "version.json",
             "AGENTS.md", "agents", "skill-catalog.json"}
+# Native app, daemon and tool state. Never history; it changes while the home is
+# otherwise stable, so the inventory records only its name and kind.
+RUNTIME_STATE = {"app-server-control", "app-server-daemon", "process_manager", "ambient-suggestions",
+                 "vendor_imports", "computer-use", ".codex-global-state.json", ".codex-global-state.json.bak",
+                 ".cmux-title-sync", ".glider", ".DS_Store"}
+# Generic names count as runtime state only while they hold exactly the known
+# content: the app inbox/automation database, or nothing.
+RUNTIME_STATE_CONTENT = {"sqlite": re.compile(r"codex-dev\.db(?:-wal|-shm|-journal)?"), "tui-luna-reserve": None}
+AUTHORITY = {"rules"}  # Native execpolicy command approvals.
+# Interrupted mktemp siblings of generated files (codex-home-prepare.sh). A
+# six-letter word suffix looks the same; every prefix names generated config.
+GENERATED_TEMP = re.compile(r"\.(?:AGENTS\.md|AGENTS\.prev|config\.toml|hooks\.json|[A-Za-z0-9_-]+\.config\.toml"
+                            r"|plugin-[A-Za-z0-9_.-]+)\.[A-Za-z0-9]{6}")
 SQLITE_NAME = re.compile(r"(?:state|thread_history|history|logs|goals|memories|queue)_\d+\.sqlite$")
 KNOWN_SQLITE = {'state_5.sqlite','thread_history_1.sqlite','logs_2.sqlite','goals_1.sqlite','memories_1.sqlite','queue_1.sqlite'}
 REVISION = re.compile(r"[0-9a-f]{40}|legacy-unknown$")
@@ -136,13 +149,33 @@ def inventory(root):
     return entries
 
 
+def runtime_state(path):
+    if path.name in RUNTIME_STATE:
+        return True
+    if path.name not in RUNTIME_STATE_CONTENT or path.is_symlink() or not path.is_dir():
+        return False
+    allowed = RUNTIME_STATE_CONTENT[path.name]
+    try:
+        return all(allowed is not None and allowed.fullmatch(child.name) and child.is_file() and not child.is_symlink()
+                   for child in path.iterdir())
+    except OSError:
+        refuse("unreadable runtime state")
+
+
+def excluded(path):
+    # Excluded entries are never archived, so retiring a root discards them.
+    name = path.name
+    return (name in EXCLUDED or name in AUTHORITY or name.endswith(".config.toml")
+            or GENERATED_TEMP.fullmatch(name) is not None or runtime_state(path))
+
+
 def source_children(source):
     if source.is_symlink() or not source.is_dir():
         refuse("source home is unsafe")
     children = []
     for path in source.iterdir():
         name = path.name
-        if name in EXCLUDED or name.endswith(".config.toml"):
+        if excluded(path):
             continue
         if sqlite_sidecar(name):
             if name[:-4] not in KNOWN_SQLITE or not regular(source/name[:-4]):
@@ -193,12 +226,14 @@ def sqlite_sidecar(name):
 def source_inventory(source, children):
     result = inventory_children(source, children)
     for path in sorted(source.iterdir()):
-        if path.name not in EXCLUDED and not path.name.endswith(".config.toml"):
+        if not excluded(path):
             continue
         meta = path.lstat()
         kind = "symlink" if path.is_symlink() else "directory" if path.is_dir() else "file"
-        result.append({"path": path.name, "excluded": True, "kind": kind, "size": meta.st_size,
-                       "mtime_ns": meta.st_mtime_ns})
+        row = {"path": path.name, "excluded": True, "kind": kind}
+        if not runtime_state(path):
+            row.update(size=meta.st_size, mtime_ns=meta.st_mtime_ns)
+        result.append(row)
     return sorted(result, key=lambda row: row["path"])
 
 
@@ -559,7 +594,7 @@ def restore(args):
     destination = Path(args.destination)
     if destination.exists():
         for path in destination.iterdir():
-            if path.name not in EXCLUDED and not path.name.endswith(".config.toml"):
+            if not excluded(path):
                 refuse("restore destination has native or unknown data")
     secure_dir(destination)
     data = root / "data"

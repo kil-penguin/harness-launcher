@@ -10,8 +10,23 @@ rule, service or daemon.
 - Archives are host-local, source/profile-bound and owner-private (0700/0600).
 - Keep original native/isolation UUIDs, source home and runtime provenance.
 - Never copy auth, generated config, hook trust, plugins or live process locks.
+  The same holds for execpolicy `rules/` (command-approval authority), the exact
+  Native app, daemon and tool state names `app-server-control`,
+  `app-server-daemon`, `process_manager`, `computer-use`, `vendor_imports`,
+  `ambient-suggestions`, `.codex-global-state.json`, `.codex-global-state.json.bak`,
+  `.cmux-title-sync` and `.glider`, Finder `.DS_Store`, and interrupted `mktemp`
+  siblings of generated files (`.AGENTS.md.XXXXXX`, `.config.toml.XXXXXX`,
+  `.plugin-<name>.XXXXXX`, ...). A six-letter word suffix matches that pattern
+  too; every matched prefix names generated config, never history. The generic
+  `sqlite/` and `tui-luna-reserve/` names are excluded only while they hold the
+  app's `codex-dev.db` (automations and inbox) or nothing. Excluded entries are
+  not archived, so retiring a root discards them. That state and qualifying
+  generic directories are inventoried by name and kind only: content changes do
+  not hold a snapshot, but an entry appearing, disappearing or changing kind does.
 - Preserve complete sessions and archived sessions, including segmented rollouts,
   parent history, attachments, shell snapshots, memories and native databases.
+  `external_agent_session_imports.json` travels with them so an imported
+  external session is not imported again.
 - Classify every top-level entry. Unknown data, active writers, invalid SQLite,
   symlinks, changed source, missing provenance or incomplete history block deletion.
 - Read-only SQLite backup includes committed WAL data. A WAL file alone does

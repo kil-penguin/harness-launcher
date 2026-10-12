@@ -184,6 +184,105 @@ class CodexHistoryTest(unittest.TestCase):
         self.assertFalse(self.receipt.exists())
         self.assertTrue((self.home / "future-native-artifact.bin").is_file())
 
+    # Observed in long-lived canonical homes; every import refused on them.
+    RUNTIME_ARTIFACTS = {
+        "app-server-control/control.sock": "", "app-server-daemon/daemon.lock": "",
+        "process_manager/chat_processes.json": "[]",
+        "ambient-suggestions/0a1b/suggestions.json": "{}", "vendor_imports/skills-curated-cache.json": "{}",
+        "computer-use/config.json": "{}", "sqlite/codex-dev.db": "app inbox",
+        ".codex-global-state.json": "{}", ".codex-global-state.json.bak": "{}",
+        "sqlite/codex-dev.db-wal": "", ".cmux-title-sync/abc.lock": "",
+        ".glider/last-agents-sync": "1", ".DS_Store": "finder", "rules/default.rules": 'prefix_rule(pattern=["rm"])',
+        ".AGENTS.prev.r2mxib": "previous generated", ".AGENTS.md.U7Wm9l": "", ".config.toml.34SyjN": "",
+        ".sol.config.toml.Ab12Cd": "", ".hooks.json.NfwGQI": "{}", ".plugin-computer-use.kBXRO6/manifest.json": "{}",
+    }
+
+    def test_runtime_state_authority_and_interrupted_writes_are_excluded_not_copied(self):
+        for relative, content in self.RUNTIME_ARTIFACTS.items():
+            (self.home / relative).parent.mkdir(parents=True, exist_ok=True)
+            (self.home / relative).write_text(content)
+        (self.home / "tui-luna-reserve").mkdir()
+        source_before = digest_tree(self.home)
+        receipt = json.loads(self.snapshot().stdout)
+        self.assertEqual(digest_tree(self.home), source_before)
+        restored = self.base / "restored-home"
+        self.run_history("restore", "--catalog", str(self.catalog), "--snapshot", receipt["snapshot_id"],
+                         "--destination", str(restored), "--receipt", str(self.base / "restore-receipt.json"))
+        tops = {relative.split("/")[0] for relative in self.RUNTIME_ARTIFACTS} | {"tui-luna-reserve"}
+        self.assertEqual({path.name for path in restored.iterdir()} & tops, set())
+        self.assertTrue((restored / "sessions/2026/10/10" / ("rollout-2026-10-10T01-02-03-" + NATIVE_THREAD_ID + ".jsonl")).is_file())
+
+    def test_external_session_import_ledger_is_kept_with_history(self):
+        ledger = '{"records":[{"imported_thread_id":"' + NATIVE_THREAD_ID + '"}]}\n'
+        (self.home / "external_agent_session_imports.json").write_text(ledger)
+        receipt = json.loads(self.snapshot().stdout)
+        restored = self.base / "restored-home"
+        self.run_history("restore", "--catalog", str(self.catalog), "--snapshot", receipt["snapshot_id"],
+                         "--destination", str(restored), "--receipt", str(self.base / "restore-receipt.json"))
+        self.assertEqual((restored / "external_agent_session_imports.json").read_text(), ledger)
+
+    def test_changing_runtime_state_keeps_the_source_inventory_stable(self):
+        state = self.home / ".codex-global-state.json"
+        state.write_text("{}")
+        before = history_module.source_inventory(self.home, history_module.source_children(self.home))
+        state.write_text('{"window":"moved"}')
+        os.utime(state, ns=(1, 1))
+        after = history_module.source_inventory(self.home, history_module.source_children(self.home))
+        self.assertEqual(before, after)
+        (self.home / "config.toml").write_text('model = "changed"\n')
+        self.assertNotEqual(after, history_module.source_inventory(self.home, history_module.source_children(self.home)))
+
+    def test_generic_runtime_directory_shape_decides_exclusion(self):
+        sqlite_dir = self.home / "sqlite"
+        sqlite_dir.mkdir()
+        self.assertTrue(history_module.excluded(sqlite_dir))
+        (sqlite_dir / "nested").mkdir()
+        self.assertFalse(history_module.excluded(sqlite_dir))
+        shutil.rmtree(sqlite_dir)
+        target = self.base / "outside.db"
+        target.write_text("outside")
+        sqlite_dir.mkdir()
+        (sqlite_dir / "codex-dev.db").symlink_to(target)
+        self.assertFalse(history_module.excluded(sqlite_dir))
+        shutil.rmtree(sqlite_dir)
+        (self.base / "outside-dir").mkdir()
+        sqlite_dir.symlink_to(self.base / "outside-dir")
+        self.assertFalse(history_module.excluded(sqlite_dir))
+        self.snapshot(expected=2)
+
+    def test_generic_runtime_directories_are_excluded_only_with_known_content(self):
+        for relative in ("sqlite/history_9.sqlite", "tui-luna-reserve/native-data"):
+            with self.subTest(relative=relative):
+                path = self.home / relative
+                path.parent.mkdir(exist_ok=True)
+                path.write_text("may be data\n")
+                self.snapshot(expected=2)
+                self.assertFalse(self.catalog.exists())
+                shutil.rmtree(path.parent)
+
+    def test_restore_destination_may_hold_runtime_state_but_not_unknown_data(self):
+        receipt = json.loads(self.snapshot().stdout)
+        destination = self.base / "fresh-home"
+        (destination / "app-server-daemon").mkdir(parents=True)
+        (destination / "rules").mkdir()
+        self.run_history("restore", "--catalog", str(self.catalog), "--snapshot", receipt["snapshot_id"],
+                         "--destination", str(destination), "--receipt", str(self.base / "restore-receipt.json"))
+        unknown = self.base / "unknown-home"
+        (unknown / "future-native-artifact").mkdir(parents=True)
+        self.run_history("restore", "--catalog", str(self.catalog), "--snapshot", receipt["snapshot_id"],
+                         "--destination", str(unknown), "--receipt", str(self.base / "unknown-receipt.json"), expected=2)
+
+    def test_names_resembling_excluded_state_still_refuse(self):
+        # A six-letter word suffix (".AGENTS.md.backup") is indistinguishable from mktemp by design.
+        for name in (".config.toml.bak", ".AGENTS.md.bak", "rules-extra", ".hooks.json.ABCDEFG",
+                     "sqlite-export", ".glider.old", ".plugin-x.ab"):
+            with self.subTest(name=name):
+                path = self.home / name
+                path.write_text("may be data\n")
+                self.snapshot(expected=2)
+                self.assertFalse(self.catalog.exists())
+                path.unlink()
+
     def test_missing_provenance_malformed_and_symlink_refuse_without_outputs(self):
         self.run_history("snapshot", "--source", str(self.home), "--catalog", str(self.catalog), "--receipt", str(self.receipt),
                          "--source-root", str(self.source_root), "--isolation-id", ISOLATION_ID, expected=2)
