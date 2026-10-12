@@ -2,6 +2,11 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.53.3 — 2026-10-12
+
+- `protect-pool` protects every profile's Native roots and tombs in the shared old session pool under each record's own source root, instead of refusing the launch with `other profile has Native history`. A recorded source root that is not an absolute normalized path, or that contains the session root, still refuses before any tomb is moved.
+- The deletion verifier also accepts Native 0.162.1, characterized with full offline history proofs of real terminal homes.
+
 ## 0.53.2 — 2026-10-12
 
 - Classify the top-level entries that long-lived Native Codex homes now contain, so a canonical `codex resume <id>` no longer refuses with `unknown top-level native artifact`. Execpolicy `rules/`, Native app/daemon/tool state and interrupted `mktemp` siblings of generated files are excluded and never copied; generic `sqlite/` and `tui-luna-reserve/` qualify only with their known content, and any other unknown name still holds. Content changes in that state no longer hold a snapshot; an entry appearing or disappearing still does. `external_agent_session_imports.json` is preserved with history.

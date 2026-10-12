@@ -13,6 +13,7 @@ import tempfile
 import time
 
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+CHARACTERIZED_VERSIONS = {b"0.161.0", b"0.162.1"}
 
 
 class NativeVerificationError(Exception):
@@ -175,9 +176,9 @@ def binary_identity(binary):
                                  capture_output=True, timeout=10, check=False)
     version = re.search(rb"codex-cli (\d+\.\d+\.\d+)", process.stdout)
     if process.returncode or not version: fail("Native version unavailable")
-    # The paginated wire protocol was verified against this version; future
+    # The paginated wire protocol was verified against these versions; future
     # versions require characterization rather than implied compatibility.
-    if version.group(1) != b"0.161.0": fail("Native version lacks characterized history verification")
+    if version.group(1) not in CHARACTERIZED_VERSIONS: fail("Native version lacks characterized history verification")
     return {"version": version.group(1).decode(), "sha256": file_digest(path),
             'executable':str(path),'wrapper':str(wrapper),'wrapper_sha256':file_digest(wrapper)}
 

@@ -64,10 +64,12 @@ rule, service or daemon.
   UUID. A Native UUID lease spans preparation, fresh creation and Native exit.
 - `protect-pool --state-home STATE --source-root ROOT --codex-bin BIN` verifies
   every terminal native-bearing root regardless of age, plus every old tomb,
-before an immutable older runtime can execute its GC. Unknown or unverified
+  before an immutable older runtime can execute its GC. Unknown or unverified
   candidates refuse that launch; old-runtime retention has a 24-hour floor.
   An explicit `archive` retention sentinel remains intact so numeric-only
-  older engines refuse deletion.
+  older engines refuse deletion. Profiles share one old pool and its GC, so
+  each root and tomb is protected under its own recorded source root;
+  `--source-root` names only the caller.
 - `presence --source HOME --anchor STATE` returns `native` or `absent` only
   after validating accessible, owned directory ancestry. Permission errors,
   redirected paths and failed checks hold the original root or old tomb.
@@ -117,7 +119,7 @@ profile boundaries, authority exclusion, failure recovery, offline selection,
 and real native history reads without a model prompt. Fixture verification is
 separate from operational host migration and authenticated model turns.
 
-The initial deletion verifier characterizes Native **0.161.0** only. Other
+The deletion verifier characterizes Native **0.161.0** and **0.162.1**. Other
 versions keep roots until their history protocol is verified. The proof compares
 every original rollout byte and all original projection items; it does not
 reconstruct projection items already missing from the original database or
