@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Filesystem contract for the native Codex history archive boundary."""
 
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -607,6 +609,89 @@ class CodexHistoryTest(unittest.TestCase):
         self.assertEqual(called, [(True, False)])
         self.assertTrue((root / ".harness/codex").is_dir())
         self.assertEqual((record / "journal").read_text(), "state=CLOSED\nidentity=\nheartbeat=2026-10-10T00:00:00Z\n")
+
+    def _pool_record(self, state, identifier, owner, root=None):
+        record = state / "sessions" / identifier; expected = state / "worktrees" / identifier
+        record.mkdir(parents=True)
+        for name, value in (("source-root", str(owner)), ("session-root", str(expected)),
+                            ("root-inode", history_module.root_inode(root or expected)),
+                            ("journal", "state=CLOSED\nidentity=\nheartbeat=2026-10-10T00:00:00Z\n"),
+                            ("lease-v1", "1\n"), ("runtime.lock", "")):
+            (record / name).write_text(value)
+        return record
+
+    def test_protect_pool_protects_other_profile_root_under_its_own_source(self):
+        # Every profile shares one legacy pool and the old GC is global.
+        state = self.base / "shared-pool"; other = self.base / "other-profile"; other.mkdir()
+        root = state / "worktrees" / ISOLATION_ID
+        shutil.copytree(self.home, root / ".harness/codex", symlinks=True)
+        self._pool_record(state, ISOLATION_ID, other)
+        verified = []
+        def fake_verify(args):
+            verified.append((args.snapshot, Path(args.source).exists(), root.exists()))
+        args = type("Args", (), {"state_home": str(state), "source_root": str(self.source_root), "codex_bin": "/bin/true"})()
+        with mock.patch.object(history_module, "verify", fake_verify), contextlib.redirect_stdout(io.StringIO()):
+            history_module.protect_pool(args)
+        manifests = [json.loads(path.read_text()) for path in (state / "native-history/snapshots").glob("*/manifest.json")]
+        self.assertEqual([(m["source_root"], m["isolation_id"]) for m in manifests], [(str(other), ISOLATION_ID)])
+        self.assertEqual(verified, [(manifests[0]["snapshot_id"], True, False)])
+        self.assertTrue((root / ".harness/codex").is_dir())
+
+    def test_protect_pool_recovers_other_profile_tomb_before_protecting_it(self):
+        state = self.base / "shared-tomb-pool"; other = self.base / "other-profile"; other.mkdir()
+        tomb = state / "worktrees" / (".archiving-" + ISOLATION_ID + "-123")
+        (tomb / ".harness/codex").mkdir(parents=True)
+        self._pool_record(state, ISOLATION_ID, other, root=tomb)
+        owners = []
+        def fake_snapshot(args):
+            owners.append(args.source_root)
+            Path(args.receipt).write_text(json.dumps({"snapshot_id": "c" * 64})); print(json.dumps({"snapshot_id": "c" * 64}))
+        args = type("Args", (), {"state_home": str(state), "source_root": str(self.source_root), "codex_bin": "/bin/true"})()
+        with mock.patch.object(history_module, "snapshot", fake_snapshot), mock.patch.object(history_module, "verify", lambda args: None):
+            history_module.protect_pool(args)
+        self.assertEqual(owners, [str(other)])
+        self.assertFalse(tomb.exists())
+        self.assertTrue((state / "worktrees" / ISOLATION_ID / ".harness/codex").is_dir())
+
+    def test_protect_pool_refuses_unnormalized_recorded_source_without_snapshot(self):
+        for owner in ("relative/profile", str(self.base / "other") + "/", str(self.base / "x/../other"),
+                      "/" + str(self.base / "other"), str(self.base)):
+            for tombed in (False, True):
+                state = self.base / ("unsafe-owner-" + hashlib.sha256((owner + str(tombed)).encode()).hexdigest()[:8])
+                root = state / "worktrees" / ((".archiving-" + ISOLATION_ID + "-123") if tombed else ISOLATION_ID)
+                (root / ".harness/codex").mkdir(parents=True)
+                self._pool_record(state, ISOLATION_ID, owner, root=root)
+                args = type("Args", (), {"state_home": str(state), "source_root": str(self.source_root), "codex_bin": "/bin/true"})()
+                with self.subTest(owner=owner, tombed=tombed), \
+                        mock.patch.object(history_module, "snapshot", side_effect=AssertionError("snapshot")):
+                    with self.assertRaisesRegex(history_module.Refusal, "unsafe recorded source root"):
+                        history_module.protect_pool(args)
+                    self.assertTrue((root / ".harness/codex").is_dir())
+
+    def test_protect_pool_binds_each_record_and_import_ledger_to_its_own_owner(self):
+        state = self.base / "mixed-pool"; other = self.base / "other-profile"; other.mkdir()
+        mine, theirs = ISOLATION_ID, "11111111-2222-4333-8444-555555555559"
+        for identifier, owner in ((mine, self.source_root), (theirs, other)):
+            shutil.copytree(self.home, state / "worktrees" / identifier / ".harness/codex", symlinks=True)
+            self._pool_record(state, identifier, owner)
+        ledger = state / "sessions" / theirs / "restored-native-sessions"
+        def bind_ledger(root):
+            ledger.write_text(json.dumps({"schema": 1, "session_id": theirs, "source_root": str(root.resolve()),
+                "imports": [{"runtime": "codex", "native_id": PARENT_THREAD_ID, "source_owner": mine}]}))
+            ledger.chmod(0o600)
+        bind_ledger(other)
+        args = type("Args", (), {"state_home": str(state), "source_root": str(self.source_root), "codex_bin": "/bin/true"})()
+        with mock.patch.object(history_module, "verify", lambda args: None), contextlib.redirect_stdout(io.StringIO()):
+            history_module.protect_pool(args)
+        manifests = {m["isolation_id"]: m for m in (json.loads(path.read_text())
+                     for path in (state / "native-history/snapshots").glob("*/manifest.json"))}
+        self.assertEqual({key: value["source_root"] for key, value in manifests.items()},
+                         {mine: str(self.source_root), theirs: str(other)})
+        self.assertEqual(manifests[theirs]["native_import_provenance"]["imports"][0]["source_owner"], mine)
+        bind_ledger(self.source_root)
+        with mock.patch.object(history_module, "verify", lambda args: None), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(history_module.Refusal, "invalid imported Native ledger"):
+                history_module.protect_pool(args)
 
     def test_catalog_warns_for_missing_or_mismatched_legacy_native_inode_without_hiding_canonical(self):
         state = self.base / "legacy-inode-warnings"

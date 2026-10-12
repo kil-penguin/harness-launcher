@@ -113,5 +113,17 @@ class ProjectionTests(unittest.TestCase):
         db.commit();db.close()
         with self.assertRaises(native.NativeVerificationError):native.expected_history(self.home)
 
+    def test_only_characterized_native_versions_verify(self):
+        binary = self.home.parent / "codex-binary"; binary.write_text("fixture"); binary.chmod(0o755)
+        for version, accepted in (("0.161.0", True), ("0.162.1", True), ("0.162.0", False), ("0.163.0", False)):
+            done = type("Done", (), {"returncode": 0, "stdout": ("codex-cli " + version + "\n").encode()})()
+            with patch.object(native, "sandbox_command", return_value=["fixture"]), \
+                    patch.object(native.subprocess, "run", return_value=done):
+                if accepted:
+                    self.assertEqual(native.binary_identity(binary)["version"], version)
+                else:
+                    with self.assertRaisesRegex(native.NativeVerificationError, "lacks characterized"):
+                        native.binary_identity(binary)
+
 
 if __name__ == "__main__": unittest.main()

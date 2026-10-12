@@ -925,11 +925,20 @@ def dedupe_entries(entries,store,keep_private=False):
     return sorted(result,key=lambda row:row['native_id'])
 
 
+def recorded_source(path, root):
+    value = path.read_text(encoding="utf-8").strip()
+    if (not value.startswith("/") or value.startswith("//") or os.path.normpath(value) != value
+            or Path(value) in (root.absolute(), *root.absolute().parents)):
+        refuse("unsafe recorded source root")
+    return value
+
+
 def protect_pool(args):
+    # Every profile shares the old pool and its GC, so each record is protected
+    # under its own recorded source root; --source-root names only the caller.
     state = Path(args.state_home)
     worktrees = state / "worktrees"
     sessions = state / "sessions"
-    source = Path(args.source_root).absolute()
     bound_path(worktrees, state)
     bound_path(sessions, state)
     if not worktrees.exists() and not sessions.exists():
@@ -949,7 +958,7 @@ def protect_pool(args):
         lock=record/'runtime.lock'
         if expected.exists() or expected.is_symlink() or not all(regular(record/name) for name in ('source-root','session-root','root-inode','journal','lease-v1','runtime.lock')):
             refuse('Native tomb owner is unverified')
-        if (record/'source-root').read_text().strip()!=str(source):refuse('other profile has Native tomb')
+        recorded_source(record/'source-root', expected)
         if (record/'session-root').read_text().strip()!=str(expected) or (record/'root-inode').read_text().strip()!=root_inode(tomb):refuse('Native tomb binding mismatch')
         with runtime_lease(lock):
             if not terminal_journal(record/'journal',record):refuse('Native tomb is not terminal')
@@ -964,8 +973,7 @@ def protect_pool(args):
         if not native_presence(native, state):continue
         if not all(regular(path) for path in (root_file, source_file, lock, journal, inode,record/'lease-v1')):
             refuse("unverified session record")
-        if source_file.read_text(encoding="utf-8").strip() != str(source):
-            refuse('other profile has Native history')
+        owner = recorded_source(source_file, root)
         root = Path(root_file.read_text(encoding="utf-8").strip())
         if root != worktrees / record.name or root.is_symlink() or not root.is_dir():
             refuse("session root binding mismatch")
@@ -981,7 +989,7 @@ def protect_pool(args):
             if not terminal_journal(journal,record) or (record/'lease-v1').read_text()!='1\n' or inode.read_text().strip()!=root_inode(root):refuse('Native candidate changed')
             receipt = record / ('native-history-protect-'+uuid.uuid4().hex+'.json')
             snapshot_args = argparse.Namespace(source=str(native), catalog=str(state / "native-history"), receipt=str(receipt),
-                                               source_root=str(source), isolation_id=record.name, runtime_revision="legacy-unknown")
+                                               source_root=owner, isolation_id=record.name, runtime_revision="legacy-unknown")
             captured = io.StringIO()
             with contextlib.redirect_stdout(captured): snapshot(snapshot_args)
             snapshot_id = json.loads(captured.getvalue())["snapshot_id"]
