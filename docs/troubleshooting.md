@@ -175,7 +175,7 @@ python3 -c "import json;print(json.load(open('.harness/kiro/settings/mcp.json'))
 printenv MY_TOKEN >/dev/null && echo set || echo missing
 
 # 3. Does the bridge reach the endpoint by hand?
-npx -y mcp-remote <url> --header "Authorization: Bearer \${MY_TOKEN}"
+npx -y mcp-remote@latest <url> --header "Authorization: Bearer \${MY_TOKEN}"
 ```
 
 Keep the `${VAR}` placeholder in the committed header; `mcp-remote` substitutes it

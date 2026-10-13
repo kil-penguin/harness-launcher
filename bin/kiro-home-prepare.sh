@@ -125,13 +125,14 @@ def _bridge_header_value(value):
     return _PLACEHOLDER.sub(replace, value)
 
 def _to_stdio_bridge(spec):
-    # Pinned: an unpinned bridge would change transport behavior under the
-    # session without any harness change. 0.14.2 is the version this translation
-    # was verified against, including its ${VAR} header substitution.
+    # Explicit @latest: package-runner MCPs follow the registry rather than a
+    # pin, and an explicit tag re-resolves where a bare name may reuse an npx
+    # cache entry. The ${VAR} header substitution relied on below was verified
+    # on 0.14.2 and 0.14.3.
     bridge = {
         "type": "stdio",
         "command": "npx",
-        "args": ["-y", "mcp-remote@0.14.2", str(spec.get("url") or "")],
+        "args": ["-y", "mcp-remote@latest", str(spec.get("url") or "")],
     }
     for header, value in (spec.get("headers") or {}).items():
         rendered = _bridge_header_value(value) if isinstance(value, str) else value

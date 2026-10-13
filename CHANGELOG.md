@@ -2,6 +2,10 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.54.1 — 2026-10-14
+
+- The Kiro authenticated-HTTP bridge runs `mcp-remote@latest` instead of the 0.14.2 pin, so it follows registry releases like the harness package-runner MCPs. `${VAR}` header substitution from the inherited environment was re-verified on 0.14.2 and 0.14.3; the credential still reaches neither argv nor a generated file.
+
 ## 0.54.0 — 2026-10-13
 
 - Bare registered prefixes show an isolated/shared workspace choice before fetching, cloning, garbage collection or runtime preparation. Canceling allocates no session; explicit launch and resume controls retain their routes.
