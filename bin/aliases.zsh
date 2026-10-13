@@ -1158,11 +1158,6 @@ _harness_launcher_run() {
     }
   fi
   local config_root="$HARNESS_DIR"
-  unset HARNESS_CODEX_GLOBAL_MCP_ALLOWLIST HARNESS_CODEX_APPS_ALLOWLIST HARNESS_CODEX_SLACK_APPS
-  source "$HARNESS_DIR/config/launcher.env"
-  mcp_surface_policy="$(harness_mcp_surface_policy_resolve "$HARNESS_MCP_SURFACE_POLICY")" || return $?
-  export HARNESS_PREFIX
-
   local HARNESS_RUN_DIR=""
   case "${1:-}" in
     --cwd)
@@ -1171,6 +1166,28 @@ _harness_launcher_run() {
       shift 2
       ;;
   esac
+  local isolated_source_run_dir="$HARNESS_RUN_DIR"
+
+  # A bare interactive entrypoint chooses its workspace before any runtime
+  # preparation, session allocation or foreground collection. Older installed
+  # runtimes can omit the helper and retain the historical TUI path.
+  if [[ $# -eq 0 && -x "$_HARNESS_LAUNCHER_BIN/harness-workspace-choice" ]]; then
+    local workspace_choice workspace_rc
+    workspace_choice="$("$_HARNESS_LAUNCHER_BIN/harness-workspace-choice")"
+    workspace_rc=$?
+    case "$workspace_rc:$workspace_choice" in
+      0:isolated) set -- --isolated ;;
+      0:shared) set -- --no-isolated ;;
+      1:*) return 0 ;;
+      130:*) return 130 ;;
+      *) return "$workspace_rc" ;;
+    esac
+  fi
+
+  unset HARNESS_CODEX_GLOBAL_MCP_ALLOWLIST HARNESS_CODEX_APPS_ALLOWLIST HARNESS_CODEX_SLACK_APPS
+  source "$HARNESS_DIR/config/launcher.env"
+  mcp_surface_policy="$(harness_mcp_surface_policy_resolve "$HARNESS_MCP_SURFACE_POLICY")" || return $?
+  export HARNESS_PREFIX
 
   # SDK hosts run diagnostics such as `auth status` through the same argv
   # prefix (`base --passthrough auth status`); a management subcommand right
@@ -1329,7 +1346,9 @@ _harness_launcher_run() {
         $orca_resume && echo "harness-launcher: could not restore isolated session $requested_session_id" >&2
         return "$resume_rc"
       }
-      HARNESS_HISTORY_SOURCE_ROOT="$source_root" "$_HARNESS_LAUNCHER_BIN/session-isolation.sh" gc >/dev/null 2>&1 || echo 'harness-launcher: warning: isolated-session GC failed; workspaces retained' >&2
+      if ! harness_claude_stdio_is_tty; then
+        HARNESS_HISTORY_SOURCE_ROOT="$source_root" "$_HARNESS_LAUNCHER_BIN/session-isolation.sh" gc >/dev/null 2>&1 || echo 'harness-launcher: warning: isolated-session GC failed; workspaces retained' >&2
+      fi
       _harness_launcher_isolated_session_create "$source_root" "$requested_session_id" || {
         local resume_rc=$?
         zsystem flock -u "$HARNESS_SESSION_LEASE_FD" 2>/dev/null || true
@@ -1337,7 +1356,11 @@ _harness_launcher_run() {
         return "$resume_rc"
       }
     else
-      HARNESS_HISTORY_SOURCE_ROOT="$source_root" "$_HARNESS_LAUNCHER_BIN/session-isolation.sh" gc >/dev/null 2>&1 || echo 'harness-launcher: warning: isolated-session GC failed; workspaces retained' >&2
+      # Do not make a new interactive start wait on retention collection.
+      # Noninteractive launches retain the legacy best-effort maintenance.
+      if ! harness_claude_stdio_is_tty; then
+        HARNESS_HISTORY_SOURCE_ROOT="$source_root" "$_HARNESS_LAUNCHER_BIN/session-isolation.sh" gc >/dev/null 2>&1 || echo 'harness-launcher: warning: isolated-session GC failed; workspaces retained' >&2
+      fi
       if $history_local_create; then
         _harness_launcher_isolated_session_create "$source_root" "" local || return $?
       else
@@ -1347,7 +1370,15 @@ _harness_launcher_run() {
       created_isolated_session=true
     fi
     HARNESS_DIR="$HARNESS_SESSION_ROOT"
-    [[ -n "$HARNESS_RUN_DIR" ]] || HARNESS_RUN_DIR="$HARNESS_SESSION_ROOT"
+    if [[ -n "$isolated_source_run_dir" ]]; then
+      HARNESS_RUN_DIR="$("$_HARNESS_LAUNCHER_BIN/session-isolation.sh" resolve-run-dir "$source_root" "$HARNESS_SESSION_ID" "$isolated_source_run_dir")" || {
+        echo 'harness-launcher: isolated session could not bind the requested working directory' >&2
+        _harness_launcher_isolated_finish "$HARNESS_SESSION_ID" "" "${HARNESS_SESSION_LEASE_FD:-}"
+        return 2
+      }
+    else
+      HARNESS_RUN_DIR="$HARNESS_SESSION_ROOT"
+    fi
     export HARNESS_RUN_DIR
     # Claude files transcripts under its cwd's project directory, which is the
     # caller's run directory (harness-exec passes --cwd), not the session root.
@@ -1381,6 +1412,12 @@ _harness_launcher_run() {
   # Every exit after the isolated session is acquired, including error
   # returns, stops a started heartbeat and finishes the session once.
   {
+    if [[ -n "$isolated_session_id" && -n "$isolated_source_run_dir" ]]; then
+      HARNESS_RUN_DIR="$("$_HARNESS_LAUNCHER_BIN/session-isolation.sh" resolve-run-dir "$HARNESS_SOURCE_ROOT" "$isolated_session_id" "$isolated_source_run_dir")" || {
+        echo 'harness-launcher: isolated session working-directory binding changed before launch' >&2
+        return 2
+      }
+    fi
     _harness_launcher_run_session "$@"
   } always {
     (( _harness_launcher_cwd_announced )) && harness_terminal_announce_cwd "$_harness_launcher_caller_dir"

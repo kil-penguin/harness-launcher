@@ -717,6 +717,7 @@ out.mkdir(parents=True, exist_ok=True)
     def environment(self, **updates):
         env = dict(os.environ)
         for inherited in (
+            "HARNESS_CODEX_CONTEXT",
             "HARNESS_CODEX_MCP_PROFILE",
             "HARNESS_CODEX_SKILL_PROFILE",
             "HARNESS_CODEX_GLOBAL_MCP_ALLOWLIST",
@@ -746,6 +747,15 @@ out.mkdir(parents=True, exist_ok=True)
         )
         self.assertEqual(result.returncode, expect, result.stderr)
         return result
+
+    def test_default_fixture_context_is_independent_of_parent_but_explicit_context_is_honored(self):
+        with mock.patch.dict(os.environ, {"HARNESS_CODEX_CONTEXT": "1m"}):
+            self.prepare()
+            with (self.codex_home / "config.toml").open("rb") as stream:
+                self.assertEqual(tomllib.load(stream)["model_context_window"], 272000)
+            self.prepare(HARNESS_CODEX_CONTEXT="1m")
+            with (self.codex_home / "config.toml").open("rb") as stream:
+                self.assertEqual(tomllib.load(stream)["model_context_window"], 1000000)
 
     def test_homebrew_compat_and_opt_entrypoints_generate_identical_hook_paths(self):
         prefix = self.tmp / "brew"

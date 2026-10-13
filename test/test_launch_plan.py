@@ -93,6 +93,20 @@ class LaunchPlanTest(unittest.TestCase):
         self.assertFalse(result["can_launch"])
         self.assertEqual(result["reason"], "explicit_network_required")
 
+    def test_claude_fork_never_inherits_parent_permission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve()
+            owner = "11111111-2222-4333-8444-555555555555"
+            session = {"native_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "action": "fork", "runtime": "claude", "launcher_session_id": owner, "source_root": str(source), "native_home": "/native/home", "archived": False}
+            grant = {"source_root": str(source), "isolated": "1", "harness_session_id": owner, "permission": "bypassPermissions"}
+            presets = [{"id": "base", "label": "Base", "model": "sonnet", "effort": "medium"}]
+            blocked = launch_plan.plan(source, "claude", "base", presets, session=session, grant=grant)
+            explicit = launch_plan.plan(source, "claude", "base", presets, session=session, grant=grant, options={"permission": "default"})
+        self.assertFalse(blocked['can_launch'])
+        self.assertEqual(blocked['reason'], 'explicit_permission_required')
+        self.assertTrue(explicit['can_launch'])
+        self.assertEqual(explicit['args'][explicit['args'].index('--permission-mode')+1], 'default')
+
     def test_claude_context_summary_preserves_native_preset_alias(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source=Path(directory)

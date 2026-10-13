@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Select the workspace policy before any launcher preparation or allocation.
+set -u
+
+usage() {
+  echo 'usage: harness-workspace-choice' >&2
+}
+
+[[ $# -eq 0 ]] || {
+  usage
+  exit 2
+}
+
+if [[ ! -t 0 || ! -t 2 ]]; then
+  echo 'harness-workspace-choice: interactive terminal required' >&2
+  exit 2
+fi
+
+trap 'exit 130' INT
+
+while :; do
+  {
+    echo 'Workspace'
+    echo '  1) Isolated workspace (Recommended)'
+    echo '  2) Use current workspace'
+    printf 'Choose [1]: '
+  } >&2
+  IFS= read -r choice || exit 1
+  case "$choice" in
+    ''|1) printf '%s\n' isolated; exit 0 ;;
+    2) printf '%s\n' shared; exit 0 ;;
+    q|Q) exit 1 ;;
+    *) echo 'Choose 1, 2, or q.' >&2 ;;
+  esac
+done

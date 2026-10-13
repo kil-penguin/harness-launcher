@@ -2,6 +2,13 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.54.0 — 2026-10-13
+
+- Bare registered prefixes show an isolated/shared workspace choice before fetching, cloning, garbage collection or runtime preparation. Canceling allocates no session; explicit launch and resume controls retain their routes.
+- Interactive starts, including managed precreated sessions, skip foreground garbage collection. Explicit GC retains its existing retention and Native history safeguards.
+- Resolve source-relative working directories through the verified session owner before launching Claude or Codex. Nested clone directories and the existing shared projects link retain their correct working directory; mismatched owners, missing directories and physical escapes fail closed.
+- Add verified explicit Claude fork support for managed launchers. Source leases remain held through exec, original transcripts and owners remain unchanged, and the child does not inherit launcher permission grants. Exact terminal-owner resumes report an actionable fork instruction instead of silently changing ownership.
+
 ## 0.53.3 — 2026-10-12
 
 - `protect-pool` protects every profile's Native roots and tombs in the shared old session pool under each record's own source root, instead of refusing the launch with `other profile has Native history`. A recorded source root that is not an absolute normalized path, or that contains the session root, still refuses before any tomb is moved.

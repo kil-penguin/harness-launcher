@@ -179,6 +179,49 @@ Limits:
 - A plain `<prefix>` launch that opens the interactive picker has no session id
   to map.
 
+### Explicit Claude fork verification
+
+Release-owned entry integrations can use `bin/harness_claude_fork.py` to handle
+`--resume <native-uuid> --fork-session` before allocating a new owner. An exact
+resume alone never authorizes a fork. `request()` recognizes direct Claude
+resume controls, option values and the `--` prompt boundary; `rewrite()` replaces
+only the selected UUID with the verified absolute transcript path and supplies
+`--permission-mode default` unless the caller explicitly selected permissions.
+It keeps launcher presets before `--passthrough` and native arguments after it,
+so a bare fork starts Claude directly and native option values cannot become
+launcher keywords.
+The launch planner likewise requires a fresh caller permission for a Claude
+fork; the parent's saved permission is not inherited.
+
+`prepare(source_root, state_home, native_id, home=None)` acquires the native-ID
+lease before catalog discovery, then acquires the known parent's `runtime.lock`.
+Only a unique source-owned `CLOSED`, `DELIVERED` or `DISCARDED` parent with an
+inactive lease is eligible. It verifies the provider binding, journal, source,
+recorded physical working directory and bounded transcript hash. Recorded clone
+subdirectories remain valid after retirement; sibling prefixes and symlink
+escapes do not establish ownership. Symlinked paths,
+unsafe files, ambiguous ownership and unknown activity fail closed. A retired
+parent's disposable root may be absent if its durable ownership proof and global
+Claude transcript remain. Canonical history without provable inactivity remains
+on hold.
+
+The returned object has `receipt`, inheritable `fds`, `recheck()` and idempotent
+`close()`. The entry must allocate a fresh owner from its current release, add
+that owner's UUID as `owner` to the receipt, and write it privately and immutably
+as `<state>/sessions/<owner>/claude-fork-origin.json`. The receipt records schema,
+runtime, source root, parent native ID and owner, parent status, native home,
+absolute locator, SHA-256 and byte count. It copies no auth, config or grants.
+The recorder refuses the parent's native UUID and refuses malformed or rebound
+receipts; only a distinct child UUID can become the new owner's provider ID.
+
+Keep both leases for the whole derived run and call `recheck()` immediately
+before native execution. POSIX record locks survive `exec`, but a forked child
+does not own them: a supervising entry must remain alive until that child exits.
+Do not rediscover the catalog or reopen either lock file in the holding process;
+closing another descriptor for the same inode would release its record lock.
+Verification failures close acquired leases. Launcher leases coordinate managed
+writers; unrelated raw CLI writers do not participate in that guarantee.
+
 ## Restore fidelity
 
 A host restore carries no model, effort or permission, so the launcher would
