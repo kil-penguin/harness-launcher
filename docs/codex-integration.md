@@ -353,7 +353,10 @@ position and attributes. Only literal `core/hooks/*.sh` arguments may move from
 the canonical root to the isolated root; their bytes must match both the source
 and the recorded Git snapshot. The four registered launcher callbacks may move only to the currently verified
 package's exact script token when both old and current files match the approved
-SHA. Every other argument, matcher and handler attribute remains exact; Orca and
+SHA. A launch-record row ending in `--callback` (ssot profiles) also needs a
+`callbacks` entry in the approval grant for
+`$HOME/.local/share/harness-service/bin/harness-session-hook` whose sha256
+matches the file. Every other argument, matcher and handler attribute remains exact; Orca and
 Herdr host commands stay literal. The derived native hash is written inside the existing
 atomic config publication, without changing global config or plugin approvals.
 

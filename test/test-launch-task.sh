@@ -89,6 +89,14 @@ run "$TEST_TEMP/x3" codex base --passthrough fork $P
 grep -Fxq -- "PARENT:$P" "$TEST_TEMP/x3" || fail 'codex fork parent not exported' "$TEST_TEMP/x3"
 run "$TEST_TEMP/x6" codex base --passthrough -m some-model fork $P
 grep -Fxq -- "PARENT:$P" "$TEST_TEMP/x6" || fail 'codex fork after option/value pairs not found' "$TEST_TEMP/x6"
+run "$TEST_TEMP/x7" codex base --passthrough -i a.png fork $P
+grep -Fxq -- 'PARENT:unset' "$TEST_TEMP/x7" || fail 'separated -i takes several values: no parent' "$TEST_TEMP/x7"
+run "$TEST_TEMP/x8" codex base --passthrough --image a.png fork $P
+grep -Fxq -- 'PARENT:unset' "$TEST_TEMP/x8" || fail 'separated --image takes several values: no parent' "$TEST_TEMP/x8"
+run "$TEST_TEMP/x9" codex base --passthrough --image=a.png fork $P
+grep -Fxq -- "PARENT:$P" "$TEST_TEMP/x9" || fail '--image=x keeps the parent' "$TEST_TEMP/x9"
+run "$TEST_TEMP/x10" codex base --passthrough -ia.png fork $P
+grep -Fxq -- "PARENT:$P" "$TEST_TEMP/x10" || fail '-ix keeps the parent' "$TEST_TEMP/x10"
 run "$TEST_TEMP/x4" codex base --passthrough resume $P
 grep -Fxq -- 'PARENT:unset' "$TEST_TEMP/x4" || fail 'codex resume is not a fork' "$TEST_TEMP/x4"
 HARNESS_LAUNCH_TASK_ID=stale run "$TEST_TEMP/x5" codex base

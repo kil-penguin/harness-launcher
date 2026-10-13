@@ -12,8 +12,9 @@ Other runtime integrations keep their existing launcher.env opt-ins. In isolated
 sessions the opt-in comes from that session snapshot; the launch record still
 binds to the canonical source root even when its checkout is older.
 
-Claude launch settings and generated Codex hooks append UserPromptSubmit,
-Stop and SubagentStart callbacks after existing hooks. They invoke the optional host callback
+Claude launch settings and generated Codex hooks append UserPromptSubmit and
+Stop callbacks after existing hooks, plus SubagentStart (for Codex only when the
+launch record hook is also on). They invoke the optional host callback
 `$HOME/.local/share/harness-service/bin/harness-session-hook` with
 `--runtime claude` or `--runtime codex`. Both callbacks discard output and errors
 and always exit successfully, including when the host callback is absent.
@@ -58,7 +59,7 @@ only produces facts; the host callback decides what to capture and send.
   nothing and exits 0 even when the callback is missing, slow or failing.
 - The record gains `source` (the `SessionStart` source), `agent_pid` and
   `agent_start` (the agent process found by the ancestry walk and its `ps`
-  start time with single spaces; they are omitted when the process table cannot
+  start time in UTC with single spaces; they are omitted when the process table cannot
   be read), `task_id` and `parent_native`. The helper still reads the process
   table once (`ps -axo pid=,ppid=,lstart=,comm=`, 5 second limit); an unreadable
   table still counts as nested and withholds the grant. The collector derives the

@@ -600,6 +600,8 @@ _harness_launcher_fork_parent() {
   if [[ "$agent" == codex ]]; then
     for (( i = 1; i <= ${#argv}; i++ )); do
       if [[ "${argv[i]}" == -* ]]; then
+        # A bare -i/--image takes several values: where `fork` sits is unknowable.
+        [[ "${argv[i]}" == (-i|--image) ]] && return 0
         # Skip the value of a known top-level option (`-m X fork <uuid>`).
         [[ "${argv[i]}" == *=* ]] || ! harness_codex_option_takes_value "${argv[i]}" || (( i++ ))
         continue
