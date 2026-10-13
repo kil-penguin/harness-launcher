@@ -482,6 +482,18 @@ rec claude "$(event SessionStart startup eeeeeeee-1111-4222-8333-000000000d04)" 
 read_rec claude eeeeeeee-1111-4222-8333-000000000d04
 [[ "$OUT" == $'source_root=/srv/harness\nisolated=0' ]] || fail "unreadable table still granted: [$OUT]"
 
+# agent_start must not depend on the system time zone (it feeds a hashed process key)
+bash -c 'exec -a /x/codex sleep 40' & TZPID=$!
+sleep 0.3
+PSARGS=(--start-pid $TZPID)
+TZSID=ffffffff-aaaa-4bbb-8ccc-0000000000e1
+rec codex "$(event SessionStart startup $TZSID)" TZ=UTC HARNESS_LAUNCH_SOURCE_ROOT=/srv/harness HARNESS_LAUNCH_ISOLATED=0
+read_full codex $TZSID; START_UTC="$(printf '%s\n' "$OUT" | sed -n 's/^agent_start=//p')"
+rec codex "$(event SessionStart startup $TZSID)" TZ=Asia/Seoul HARNESS_LAUNCH_SOURCE_ROOT=/srv/harness HARNESS_LAUNCH_ISOLATED=0
+read_full codex $TZSID; START_KST="$(printf '%s\n' "$OUT" | sed -n 's/^agent_start=//p')"
+kill $TZPID 2>/dev/null; wait $TZPID 2>/dev/null || true
+[[ -n "$START_UTC" && "$START_UTC" == "$START_KST" ]] || fail "agent_start depends on TZ: [$START_UTC] vs [$START_KST]"
+
 # --- callback (record -> collector callback, one sequential command) ---------------
 CB_HOME="$TMP/cbhome"; mkdir -p "$CB_HOME/.local/share/harness-service/bin"
 CB="$CB_HOME/.local/share/harness-service/bin/harness-session-hook"

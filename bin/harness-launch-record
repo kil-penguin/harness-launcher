@@ -13,7 +13,7 @@ transcript or rollout, and prints nothing (a hook's stdout becomes session
 context). It always exits 0.
 
 Auto-link facts (P3-L): the record also holds the SessionStart `source`, the
-`agent_pid` and `agent_start` (ps lstart, whitespace-collapsed) of the agent
+`agent_pid` and `agent_start` (ps lstart in UTC, whitespace-collapsed) of the agent
 process found by the ancestry walk, and the launcher's `task_id` (--task) and
 `parent_native` (fork). With --callback the same command then runs the optional
 host collector callback (`~/.local/share/harness-service/bin/harness-session-hook
@@ -229,7 +229,7 @@ def process_table(path=None):
         else:
             text = subprocess.run(["ps", "-axo", "pid=,ppid=,lstart=,comm="], capture_output=True,
                                   text=True, timeout=5, check=True,
-                                  env=dict(os.environ, LC_ALL="C")).stdout
+                                  env=dict(os.environ, LC_ALL="C", TZ="UTC0")).stdout
         table = {}
         for line in text.splitlines():
             match = PS_LINE.fullmatch(line)

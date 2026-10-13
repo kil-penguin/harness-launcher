@@ -253,4 +253,24 @@ class CallbackMappingSafetyTests(unittest.TestCase):
             with self.assertRaises((OSError,ValueError)):
                 m.approved_package_command('python3 '+str(path)+' '+tail,grant)
 
+    def test_callback_row_needs_the_approved_host_callback_bytes(self):
+        spec=importlib.util.spec_from_file_location('callback_host',ROOT/'bin/codex-hook-trust.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+        path=ROOT/'bin/harness-launch-record'
+        with tempfile.TemporaryDirectory() as home:
+            hook=Path(home)/'.local/share/harness-service/bin/harness-session-hook'
+            hook.parent.mkdir(parents=True);hook.write_text('#!/bin/sh\nexit 0\n')
+            base={str(path):hashlib.sha256(path.read_bytes()).hexdigest()}
+            digest=hashlib.sha256(hook.read_bytes()).hexdigest()
+            carried='python3 '+str(path)+' codex --callback'
+            plain='python3 '+str(path)+' codex'
+            def carry(command,callbacks):
+                with mock.patch.dict(os.environ,{'HOME':home}):
+                    return m.equivalent_command(command,command,Path('/nonexistent-source'),Path('/nonexistent-target'),'0'*40,{'callbacks':callbacks})
+            self.assertTrue(carry(carried,{**base,str(hook):digest}))
+            self.assertFalse(carry(carried,base),'missing host callback grant entry')
+            self.assertFalse(carry(carried,{**base,str(hook):'0'*64}),'wrong host callback hash')
+            hook.write_text('#!/bin/sh\necho changed\n')
+            self.assertFalse(carry(carried,{**base,str(hook):digest}),'host callback bytes changed after the grant')
+            self.assertTrue(carry(plain,base),'rows without --callback are unchanged')
+
 if __name__ == '__main__': unittest.main()

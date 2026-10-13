@@ -87,6 +87,8 @@ run "$TEST_TEMP/x2" codex base --task bad
 [[ $RC == 2 && ! -s "$TEST_TEMP/x2" ]] || fail "codex bad --task must refuse (rc=$RC)" "$TEST_TEMP/x2"
 run "$TEST_TEMP/x3" codex base --passthrough fork $P
 grep -Fxq -- "PARENT:$P" "$TEST_TEMP/x3" || fail 'codex fork parent not exported' "$TEST_TEMP/x3"
+run "$TEST_TEMP/x6" codex base --passthrough -m some-model fork $P
+grep -Fxq -- "PARENT:$P" "$TEST_TEMP/x6" || fail 'codex fork after option/value pairs not found' "$TEST_TEMP/x6"
 run "$TEST_TEMP/x4" codex base --passthrough resume $P
 grep -Fxq -- 'PARENT:unset' "$TEST_TEMP/x4" || fail 'codex resume is not a fork' "$TEST_TEMP/x4"
 HARNESS_LAUNCH_TASK_ID=stale run "$TEST_TEMP/x5" codex base

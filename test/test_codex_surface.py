@@ -1330,7 +1330,8 @@ out.mkdir(parents=True, exist_ok=True)
     def enable_ssot(self):
         (self.repo / 'config' / 'ssot-session-hooks.json').write_text('{"enabled":true}')
 
-    def test_ssot_alone_adds_callback_only_session_and_subagent_start(self):
+    def test_ssot_alone_adds_no_session_or_subagent_start_rows(self):
+        # Without the launch record the collector would drop them as unbound_session.
         self.set_launcher_env('HARNESS_PREFIX="x"')
         self.prepare()
         baseline = self.read_hooks()
@@ -1338,15 +1339,11 @@ out.mkdir(parents=True, exist_ok=True)
         self.prepare()
         hooks = self.read_hooks()
         for event in ('SessionStart', 'SubagentStart'):
-            self.assertEqual(hooks[event][:-1], baseline.get(event, []))
-            row = hooks[event][-1]['hooks'][0]
-            self.assertEqual(row['timeout'], 5, event)
-            self.assertIn('harness-session-hook', row['command'])
-            self.assertIn('--runtime codex', row['command'])
-            self.assertNotIn('harness-launch-record', row['command'])
-            self.assertNotIn('matcher', hooks[event][-1])
+            self.assertEqual(hooks.get(event), baseline.get(event), event)
+        self.assertNotIn('harness-session-hook', json.dumps(hooks.get('SessionStart', [])))
         for event in ('UserPromptSubmit', 'Stop'):
             self.assertEqual(hooks[event][-1]['hooks'][0]['timeout'], 5)
+            self.assertIn('--runtime codex', hooks[event][-1]['hooks'][0]['command'])
 
     def test_ssot_with_launch_record_runs_record_then_callback_as_one_session_start_command(self):
         self.set_launcher_env('HARNESS_PREFIX="x"', "HARNESS_LAUNCH_RECORD_HOOKS=1")

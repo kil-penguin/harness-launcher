@@ -112,6 +112,12 @@ The `launch_record` row is not a host script. It runs the launcher's own
 [Restore fidelity](#restore-fidelity). Enabling it changes `hooks.json`, so rerun
 the harness's Codex hook trust step afterwards; Codex will not run an untrusted
 hook.
+With the ssot opt-in also on, the row becomes `harness-launch-record codex --callback`
+(timeout 10), and carrying it into an isolated home additionally requires a
+`callbacks` entry with the sha256 of
+`$HOME/.local/share/harness-service/bin/harness-session-hook` in the hook-approval
+grant. Only `SessionStart` runs the host callback in such carried sessions
+(see [session-collector](session-collector.md)).
 
 ## Resume routing
 

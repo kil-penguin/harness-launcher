@@ -46,8 +46,10 @@ only produces facts; the host callback decides what to capture and send.
   `harness-session-hook --runtime <agent>` with the same payload
   (`harness-launch-record <agent> ... --callback`). No hook ordering is assumed
   and no second `SessionStart` row is written next to it. Without the launch
-  record hook the ssot row adds a callback-only `SessionStart`.
-- `SubagentStart` runs the callback only (no record step).
+  record hook (Codex) the ssot row adds neither `SessionStart` nor
+  `SubagentStart`: capture needs the record and would drop them.
+- `SubagentStart` runs the callback only (no record step); on Codex it is emitted
+  only together with the launch record hook.
 - Timeouts: the combined `SessionStart` command is 10 seconds (it was 5 for the
   record alone), because the record helper keeps its own 5 second limit for the
   single process-table read and the callback gets what is left (it is cut off
@@ -70,6 +72,16 @@ only produces facts; the host callback decides what to capture and send.
   (together, or neither) runs the callback once with `--runtime buzz` and a
   `RunStart` payload of ids only. Without both arguments nothing is sent; the
   collector additionally drops runtimes that are not enabled.
+
+Hook approval grant: for an ssot profile whose Codex row is the combined
+`SessionStart` command (`... harness-launch-record codex --callback`), the
+hook-approval grant used to carry approved hooks into isolated homes must hold a
+`callbacks` entry for `$HOME/.local/share/harness-service/bin/harness-session-hook`
+with that file's sha256, next to the launcher callbacks. Without the entry, or when
+the file's bytes differ from it, the row is not carried and native review remains.
+Rows without `--callback` need no such entry. In carried isolated Codex sessions
+only `SessionStart` runs the host callback; `SubagentStart`, `UserPromptSubmit` and
+`Stop` still do not run there (their host-script rows are not carried).
 
 Hook trust: changed Codex hook commands and timeouts need a new Codex hook trust
 approval per profile (see above). Claude hooks have no trust step.

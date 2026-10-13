@@ -599,7 +599,11 @@ _harness_launcher_fork_parent() {
   local i arg id="" fork=false
   if [[ "$agent" == codex ]]; then
     for (( i = 1; i <= ${#argv}; i++ )); do
-      [[ "${argv[i]}" == -* ]] && continue
+      if [[ "${argv[i]}" == -* ]]; then
+        # Skip the value of a known top-level option (`-m X fork <uuid>`).
+        [[ "${argv[i]}" == *=* ]] || ! harness_codex_option_takes_value "${argv[i]}" || (( i++ ))
+        continue
+      fi
       [[ "${argv[i]}" == fork && "${argv[i+1]-}" =~ $uuid_re ]] && print -r -- "${(L)argv[i+1]}"
       return 0
     done

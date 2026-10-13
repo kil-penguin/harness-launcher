@@ -233,10 +233,14 @@ def equivalent_command(command, desired, source, target, base, grant):
                     ">/dev/null 2>&1; exit 0; }; cat >/dev/null'")
         if command == expected:
             return callback_approved(Path(script.replace("$HOME", str(Path.home()))), grant)
+    carried_callback = len(tokens) == 4
     return (len(tokens) in (2, 3, 4) and callback_approved(Path(tokens[1]), grant) and
             Path(tokens[1]).name in {"codex-cmux-title-sync.py", "harness-launch-record"} and
             (len(tokens) == 2 or tokens[2] == "codex") and
-            (len(tokens) < 4 or (tokens[3] == "--callback" and Path(tokens[1]).name == "harness-launch-record")))
+            (not carried_callback or
+             (tokens[3] == "--callback" and Path(tokens[1]).name == "harness-launch-record" and
+              # The row also runs the host collector callback: its bytes need the same grant as the orca/herdr scripts.
+              callback_approved(Path.home() / ".local/share/harness-service/bin/harness-session-hook", grant))))
 
 
 def callback_approved(path, grant):

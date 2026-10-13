@@ -1991,9 +1991,9 @@ RUNTIME_HOOK_REGISTRY = (
         "name": "ssot",
         "script": "$HOME/.local/share/harness-service/bin/harness-session-hook",
         "argument": "--runtime codex",
-        # SessionStart is the tail of the launch_record command when both are
-        # on (record, then callback, one sequential command); alone it is the
-        # callback only. Never a second SessionStart row next to launch_record.
+        # SessionStart is the tail of the launch_record command (record, then
+        # callback, one sequential command), never a row of its own; SubagentStart
+        # is emitted only together with launch_record (capture needs the record).
         "events": ("UserPromptSubmit", "Stop", "SessionStart", "SubagentStart"),
         "timeout": 5,
     },
@@ -2018,7 +2018,9 @@ for row in RUNTIME_HOOK_REGISTRY:
         row_command += " --callback"
         row_timeout = 10
     for event in row["events"]:
-        if combined and row["name"] == "ssot" and event == "SessionStart":
+        if row["name"] == "ssot" and (event == "SessionStart" or (event == "SubagentStart" and not combined)):
+            # SessionStart rides the launch_record command; session/subagent
+            # capture needs that record, so ssot alone adds neither row.
             continue
         config["hooks"].setdefault(event, []).append(
             {"hooks": [{"type": "command", "command": row_command, "timeout": row_timeout}]}
