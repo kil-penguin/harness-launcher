@@ -576,6 +576,63 @@ resume_session() {
   write_heartbeat "$dir"
   printf 'HARNESS_SESSION_ID=%s\nHARNESS_SOURCE_ROOT=%s\nHARNESS_SESSION_ROOT=%s\nHARNESS_RUN_DIR=%s\n' "$id" "$source" "$root" "$root"
 }
+
+# Strict mapping trust check; legacy GC/root_intact compatibility is unchanged.
+run_dir_record_safe() {
+  local path="$1" kind="$2" meta owner links mode
+  [[ ! -L "$path" ]] || return 1
+  if [[ "$kind" == directory ]]; then [[ -d "$path" ]] || return 1
+  else [[ -f "$path" ]] || return 1; fi
+  meta="$(stat -f '%u %l %Lp' "$path" 2>/dev/null || stat -c '%u %h %a' "$path" 2>/dev/null)" || return 1
+  read -r owner links mode <<< "$meta"
+  [[ "$owner" == "$EUID" && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  [[ "$kind" == directory || "$links" == 1 ]] || return 1
+  (( (8#$mode & 022) == 0 ))
+}
+
+# resolve_run_dir <source-root> <session-id> <source-run-dir>
+# Bind a caller-selected source-relative directory to the session clone. The
+# record, journal and root inode make this a broker decision, never an ambient
+# environment trust decision. `projects` is the sole external exception: an
+# interactive clone deliberately links its canonical source projects directory.
+resolve_run_dir() {
+  local source="$1" id="$2" requested="$3" dir recorded root root_abs source_abs requested_abs relative mapped projects worktrees expected record state
+  valid_id "$id" || return 2
+  dir="$(session_dir "$id")"
+  state="$(state_home)"
+  for record in "$state" "$state/sessions" "$dir" "$state/worktrees"; do
+    run_dir_record_safe "$record" directory || return 2
+  done
+  for record in source-root session-root root-inode journal; do
+    run_dir_record_safe "$dir/$record" file || return 2
+  done
+  journal_valid "$dir/journal" || return 2
+  source_abs="$(cd "$source" 2>/dev/null && pwd -P)" || return 2
+  recorded="$(<"$dir/source-root")"
+  [[ -d "$recorded" && "$(cd "$recorded" 2>/dev/null && pwd -P)" == "$source_abs" ]] || return 2
+  root="$(<"$dir/session-root")"
+  root_intact "$dir" "$root" || return 2
+  root_abs="$(cd "$root" 2>/dev/null && pwd -P)" || return 2
+  worktrees="$(state_home)/worktrees"
+  [[ -d "$worktrees" && ! -L "$worktrees" ]] || return 2
+  expected="$(cd "$worktrees" 2>/dev/null && pwd -P)/$id"
+  [[ "$root_abs" == "$expected" ]] || return 2
+  requested_abs="$(cd "$requested" 2>/dev/null && pwd -P)" || return 2
+  case "$requested_abs" in
+    "$root_abs"|"$root_abs"/*) printf '%s\n' "$requested_abs"; return 0 ;;
+    "$source_abs"|"$source_abs"/*) ;;
+    *) return 2 ;;
+  esac
+  relative="${requested_abs#"$source_abs"}"
+  mapped="$root$relative"
+  [[ -d "$mapped" ]] || return 2
+  mapped="$(cd "$mapped" 2>/dev/null && pwd -P)" || return 2
+  case "$mapped" in "$root_abs"|"$root_abs"/*) printf '%s\n' "$mapped"; return 0 ;; esac
+  projects="$root/projects"
+  [[ "$relative" == /projects || "$relative" == /projects/* ]] || return 2
+  [[ -L "$projects" && "$(readlink "$projects")" == "$source_abs/projects" ]] || return 2
+  case "$mapped" in "$source_abs/projects"|"$source_abs/projects"/*) printf '%s\n' "$mapped" ;; *) return 2 ;; esac
+}
 transition() {
   local id="$1" next="$2" identity="${3:-}" dir old old_identity
   dir="$(session_dir "$id")"; [[ -f "$dir/journal" ]] || { echo "unknown session: $id" >&2; return 2; }
@@ -1152,6 +1209,7 @@ discard_unlocked() {
 case "${1:-}" in
   create) shift; if [[ "${1:-}" == --local ]]; then shift; [[ $# -eq 1 ]] || exit 2; create "$1" 1; else [[ $# -eq 1 ]] || exit 2; create "$1"; fi ;;
   discard) shift; [[ $# -eq 1 ]] || exit 2; with_lock discard_unlocked "$1" ;;
+  resolve-run-dir) shift; [[ $# -eq 3 ]] || exit 2; resolve_run_dir "$@" ;;
   resume) shift; [[ $# -eq 2 ]] || exit 2; resume_session "$1" "$2" ;;
   transition)
     shift
@@ -1171,5 +1229,5 @@ case "${1:-}" in
   submit) shift; submit "$1" ;;
   integrate) shift; [[ $# -eq 1 ]] || exit 2; integrate "$1" ;;
   close) shift; [[ $# -eq 1 ]] || exit 2; close_session "$1" ;;
-  *) echo 'usage: harness-session {create|resume|transition|exit|recover|list|heartbeat|gc|reserve-hold|release-hold|submit|integrate|close|discard|sandbox-check}' >&2; exit 2 ;;
+  *) echo 'usage: harness-session {create|resolve-run-dir|resume|transition|exit|recover|list|heartbeat|gc|reserve-hold|release-hold|submit|integrate|close|discard|sandbox-check}' >&2; exit 2 ;;
 esac

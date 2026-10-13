@@ -11,7 +11,10 @@ from itertools import islice
 from typing import Dict, Optional
 from pathlib import Path
 
-from harness_session_archive import ArchiveError, verify, native_restore_selection
+if __package__:
+    from .harness_session_archive import ArchiveError, verify, native_restore_selection
+else:
+    from harness_session_archive import ArchiveError, verify, native_restore_selection
 
 MAX_SESSIONS = 1000
 PREFIX_BYTES = 64 * 1024
@@ -282,6 +285,25 @@ def _claude_meta(path):
     return None
 
 
+def _recorded_run_dir(path, source, root):
+    """Accept recorded physical directories within this source or owner root.
+
+    Retired roots may be absent. Resolving existing ancestors still excludes
+    symlink escapes, while exact canonical spelling preserves their durable
+    run-directory proof after GC removes the disposable clone.
+    """
+    try:
+        candidate = Path(path)
+        boundaries = (Path(source), Path(root))
+        if not candidate.is_absolute() or str(candidate.resolve(strict=False)) != path:
+            return False
+        if any(not boundary.is_absolute() or boundary.resolve(strict=False) != boundary for boundary in boundaries):
+            return False
+        return any(candidate.is_relative_to(boundary) for boundary in boundaries)
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 def _provider_owners(state, source, problems, profile):
     owners = {}
     sessions = state / 'sessions'
@@ -304,7 +326,7 @@ def _provider_owners(state, source, problems, profile):
             runs = directory / 'run-dirs'
             if runs.is_file() and not runs.is_symlink():
                 for path in _metadata(runs).splitlines():
-                    if path == str(source) or path.startswith(str(source) + '/') or path == root:
+                    if _recorded_run_dir(path, source, root):
                         allowed.append(path)
             if not os.path.lexists(directory/'provider-sessions'):continue
             for value in _metadata(directory/'provider-sessions').splitlines():

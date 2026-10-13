@@ -17,10 +17,10 @@
 #   exec-codex    harness-exec <harness> codex base
 #   harness-codex harness-codex exec x             (SDK-host Codex executable)
 #   exec-kiro     harness-exec <harness> kiro-cli
-#   exec-tui      harness-exec <harness>           (launcher.sh TUI, stubbed)
+#   exec-tui      harness-exec <harness> --no-isolated (launcher.sh TUI, stubbed)
 #   exec-claude-cwd  harness-exec <harness> --cwd <harness> base (run dir differs
 #                 from the caller's directory)
-#   exec-tui-cwd  harness-exec <harness> --cwd <harness> (TUI quit without a
+#   exec-tui-cwd  harness-exec <harness> --cwd <harness> --no-isolated (TUI quit without a
 #                 launch: the stub returns)
 #
 # In herdr the launcher announces the run directory before the agent starts
@@ -80,6 +80,7 @@ cat > "$SHARE/kiro-home-prepare.sh" <<'EOF'
 mkdir -p "$1/.harness/kiro"
 EOF
 # The TUI is stubbed: the launcher only has to reach it with the right env.
+# Explicit shared selection bypasses the separately tested workspace chooser.
 cat > "$SHARE/launcher.sh" <<'EOF'
 #!/usr/bin/env bash
 cat "$HARNESS_TERMINAL_TTY" > "$STUB_DUMP.osc0" 2>/dev/null || true
@@ -192,10 +193,10 @@ path_cmd() {
     exec-codex)    PATH_CMD=("$PREFIX/bin/harness-exec" "$HARNESS" codex base) ;;
     harness-codex) PATH_CMD=("$PREFIX/bin/harness-codex" exec x) ;;
     exec-kiro)     PATH_CMD=("$PREFIX/bin/harness-exec" "$HARNESS" kiro-cli); HAS_BROKER=0 ;;
-    exec-tui)      PATH_CMD=("$PREFIX/bin/harness-exec" "$HARNESS"); HAS_BROKER=0 ;;
+    exec-tui)      PATH_CMD=("$PREFIX/bin/harness-exec" "$HARNESS" --no-isolated); HAS_BROKER=0 ;;
     exec-claude-cwd) PATH_CMD=("$PREFIX/bin/harness-exec" "$HARNESS" --cwd "$HARNESS" base)
                    OSC_DIR="$HARNESS_REAL" ;;
-    exec-tui-cwd)  PATH_CMD=("$PREFIX/bin/harness-exec" "$HARNESS" --cwd "$HARNESS"); HAS_BROKER=0
+    exec-tui-cwd)  PATH_CMD=("$PREFIX/bin/harness-exec" "$HARNESS" --cwd "$HARNESS" --no-isolated); HAS_BROKER=0
                    OSC_DIR="$HARNESS_REAL" ;;
   esac
 }

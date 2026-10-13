@@ -12,6 +12,9 @@
 
 set -euo pipefail
 
+# Controller session identity must not bind these independent fake harnesses.
+unset HARNESS_SOURCE_ROOT HARNESS_SESSION_ROOT HARNESS_SESSION_ID HARNESS_RUN_DIR
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LAUNCHER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env zsh
 # test-resume-run-dirs.sh — a Claude resume after /clear maps back to its
-# isolated session when the agent ran in the caller's directory.
+# isolated session when the agent ran in its mapped clone directory.
 #
 # harness-exec always passes `--cwd <caller dir>` (the caller's $PWD inside the
-# harness, else the harness root), and an isolated session keeps that run
-# directory, so Claude files its transcripts under
-# <config>/projects/<encoded run dir>/ rather than under the session root. The
-# launcher records every run directory of an isolated session in
+# harness, else the harness root). Isolation maps it to the same relative path
+# in the clone, where Claude files its transcripts. Older sessions may retain
+# source-tree run directories, which remain covered by the legacy fixtures below.
+# The launcher records every run directory of an isolated session in
 # <state>/sessions/<id>/run-dirs, and the restore resolver looks for a
 # record-only owner's transcript under the session root and every valid
 # recorded run directory. The records are trusted only as far as the L4/A4
@@ -67,7 +67,7 @@ exec_in() {
     cd "$dir"
     perl -e 'alarm 60; exec @ARGV' env -i HOME="$HOME" PATH="$TMP/bin:/usr/bin:/bin" \
       TERM=xterm-256color LANG=en_US.UTF-8 ZDOTDIR="$TMP/zdot" HARNESS_SESSION_STATE_HOME="$STATE" \
-      HARNESS_SESSION_ISOLATION=1 CLAUDE_CONFIG_DIR="$CFG" STUB_LOG="$log" \
+      HARNESS_SESSION_ISOLATION=1 HARNESS_SESSION_HEARTBEAT_SECONDS=1 CLAUDE_CONFIG_DIR="$CFG" STUB_LOG="$log" \
       RECORDER="$ROOT/bin/harness-session-provider-record" "${envs[@]}" \
       /bin/zsh "$ROOT/bin/harness-exec" "$HARNESS" "$@"
   ) </dev/null >/dev/null 2>"$log.err"
@@ -87,15 +87,17 @@ for dir in "$HARNESS" "$HARNESS/sub"; do
     || { cat "$TMP/launch$n.log.err" >&2; fail "fresh launch from $dir failed"; }
   root="$(session_of "$TMP/launch$n.log")"
   id="${root:t}"
-  [[ -n "$root" && "$(cwd_of "$TMP/launch$n.log")" == "${dir:A}" ]] || fail "agent did not run in the caller dir $dir"
+  run_dir="${root:A}${dir#$HARNESS}"
+  [[ -n "$root" && "$(cwd_of "$TMP/launch$n.log")" == "$run_dir" ]] || fail "agent did not run in the mapped clone dir $run_dir"
   grep -qxF "claude $cleared" "$STATE/sessions/$id/provider-sessions" || fail 'recorder did not record the /clear id'
-  grep -qxF -- "${dir:A}" "$STATE/sessions/$id/run-dirs" || fail "run dir ${dir:A} was not recorded"
+  grep -qxF -- "$run_dir" "$STATE/sessions/$id/run-dirs" || fail "run dir $run_dir was not recorded"
   for try in 1 2; do
     exec_in "$dir" "$TMP/restore$n.log" -- base --resume "$cleared" \
       || { cat "$TMP/restore$n.log.err" >&2; fail "restore of /clear id from $dir (try $try) was not mapped"; }
     [[ "$(session_of "$TMP/restore$n.log")" == "$root" ]] || fail "restore from $dir landed in the wrong session"
+    [[ "$(cwd_of "$TMP/restore$n.log")" == "$run_dir" ]] || fail "restore from $dir did not retain mapped clone cwd $run_dir"
   done
-  [[ "$(grep -cxF -- "${dir:A}" "$STATE/sessions/$id/run-dirs")" == 1 ]] || fail 'an identical run-dirs line must not be appended twice'
+  [[ "$(grep -cxF -- "$run_dir" "$STATE/sessions/$id/run-dirs")" == 1 ]] || fail 'an identical run-dirs line must not be appended twice'
   [[ -f "$STATE/sessions/$id/run-dirs" && ! -L "$STATE/sessions/$id/run-dirs" ]] || fail 'run-dirs must be a regular file'
   SESSION_BY_DIR[$dir]="$id"
 done
@@ -178,7 +180,7 @@ done
 find "$HARNESS" -maxdepth 1 -name alias5 -delete
 
 # --- a forged source-tree line only confirms ids its session owns --------------
-# harness-exec launches file transcripts under source-tree project directories.
+# Older harness-exec releases filed transcripts under source-tree directories.
 # Session B's transcript lives under $D5; session A forges a canonical line for
 # it. The owner count decides: an id recorded only by B is not A's (and B never
 # ran in $D5, so it is rejected); recorded by both it is ambiguous; recorded by

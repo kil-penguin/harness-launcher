@@ -19,6 +19,13 @@
 HARNESS_DIR="${HARNESS_DIR:?HARNESS_DIR required}"
 HARNESS_NAME="${HARNESS_NAME:?HARNESS_NAME required}"
 
+# Bind the config owner before evaluating any isolated launcher configuration.
+LAUNCHER_BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "${HARNESS_SOURCE_ROOT:-}" ] && [ -n "${HARNESS_SESSION_ID:-}" ]; then
+  bound_root="$("$LAUNCHER_BIN_DIR/session-isolation.sh" resolve-run-dir "$HARNESS_SOURCE_ROOT" "$HARNESS_SESSION_ID" "$HARNESS_SOURCE_ROOT")" || exit $?
+  [ "$(cd "$HARNESS_DIR" 2>/dev/null && pwd -P)" = "$bound_root" ] || exit 2
+fi
+
 # The launcher is a native Codex entrypoint as well as a TUI. Load only its
 # trusted harness configuration so global MCP selection cannot inherit from the
 # caller when the config omits it.
@@ -51,7 +58,11 @@ prepare_codex_apps_allowlist() {
 }
 
 if [ -n "${HARNESS_RUN_DIR:-}" ]; then
-  HARNESS_RUN_DIR="$(harness_resolve_run_dir "$HARNESS_DIR" "$HARNESS_RUN_DIR")" || exit $?
+  if [ -n "${HARNESS_SOURCE_ROOT:-}" ] && [ -n "${HARNESS_SESSION_ID:-}" ]; then
+    HARNESS_RUN_DIR="$("$LAUNCHER_BIN_DIR/session-isolation.sh" resolve-run-dir "$HARNESS_SOURCE_ROOT" "$HARNESS_SESSION_ID" "$HARNESS_RUN_DIR")" || exit $?
+  else
+    HARNESS_RUN_DIR="$(harness_resolve_run_dir "$HARNESS_DIR" "$HARNESS_RUN_DIR")" || exit $?
+  fi
 else
   harness_resolve_run_dir "$HARNESS_DIR" "$HARNESS_DIR" >/dev/null || exit $?
   HARNESS_RUN_DIR="$HARNESS_DIR"

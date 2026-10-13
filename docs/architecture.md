@@ -225,11 +225,21 @@ in the launching environment (not in `settings.local.json`) disables the
 mirror.
 
 Profiles may default only fresh interactive direct-Claude and native-Codex
-routes into this boundary. The router classifies arguments before allocating a
-UUID: non-interactive, batch, help, diagnostics, gateway/Kiro, and no-argument
-TUI routes remain legacy (an explicit `--isolated` still isolates them and
-runs in the session root), while generic continuation commands require either an
+routes into this boundary. A bare interactive profile command chooses an
+isolated workspace or the existing shared workspace before runtime menus,
+preparation, or session collection run. The router classifies arguments before
+allocating a UUID: non-interactive, batch, help, diagnostics, and gateway/Kiro
+routes remain legacy (an explicit `--isolated` still isolates them and runs in
+the session root), while generic continuation commands require either an
 exact `--isolated-session <uuid>` or an intentional `--no-isolated` rollback.
+Fresh interactive sessions, including precreated UUIDs, skip foreground retention
+collection. Explicit `--isolated`, `--isolated-session`, and `--no-isolated`
+selectors bypass the workspace question. A source subdirectory maps to the
+same relative path in the clone; the broker-created `projects` link retains its
+source workspace. The broker validates the session journal, recorded source,
+state location, and root inode before mapping and again at TUI entry. Other
+symlink escapes and missing clone directories fail closed.
+
 Argument classification stops at the prompt/freeform boundary so prompt text
 that resembles a launcher switch cannot alter isolation.
 

@@ -314,7 +314,7 @@ cat > "$PREFIX/share/harness-launcher/launcher.sh" <<'EOF'
 EOF
 chmod +x "$PREFIX/share/harness-launcher/launcher.sh"
 HOME="$FAKE_HOME" HARNESS_EXEC_TUI_LOG="$TUI_LOG" \
-  "$PREFIX/bin/harness-exec" "$HARNESS" --cwd "$WORKTREE"
+  "$PREFIX/bin/harness-exec" "$HARNESS" --cwd "$WORKTREE" --no-isolated
 
 if ! grep -Fqx "HARNESS_RUN_DIR:$WORKTREE_REAL" "$TUI_LOG"; then
   echo "FAIL: launchpad did not receive the explicit worktree" >&2
@@ -333,7 +333,8 @@ git -C "$GIT_HARNESS" init -q -b main
 git -C "$GIT_HARNESS" config user.email test@example.invalid
 git -C "$GIT_HARNESS" config user.name test
 printf '%s\n' 'HARNESS_NAME="git harness"' 'HARNESS_PREFIX="gh"' > "$GIT_HARNESS/config/launcher.env"
-git -C "$GIT_HARNESS" add config/launcher.env && git -C "$GIT_HARNESS" commit -qm initial
+: > "$GIT_HARNESS/sub/fixture"
+git -C "$GIT_HARNESS" add config/launcher.env sub/fixture && git -C "$GIT_HARNESS" commit -qm initial
 GIT_HARNESS_SUB_REAL="$(cd "$GIT_HARNESS/sub" && pwd -P)"
 cat > "$STUB_BIN/claude" <<'EOF2'
 #!/usr/bin/env bash
@@ -397,7 +398,7 @@ grep -Fqx "PWD:$session_root" "$CLAUDE_LOG" && grep -Fqx "RUN:$session_root" "$C
 echo "PASS: harness-exec --isolated-session defaults to the session root"
 
 run_git_harness --cwd "$GIT_HARNESS/sub" --isolated-session "$session_id" --passthrough -p 'product task'
-grep -Fqx "PWD:$GIT_HARNESS_SUB_REAL" "$CLAUDE_LOG" || {
-  echo 'FAIL: explicit product cwd must still override the isolated default' >&2
+grep -Fqx "PWD:$session_root/sub" "$CLAUDE_LOG" || {
+  echo 'FAIL: explicit source subdirectory must map to the isolated clone' >&2
   sed 's/^/  /' "$CLAUDE_LOG" >&2; exit 1; }
-echo "PASS: UUID shortcuts preserve an explicit product cwd"
+echo "PASS: UUID shortcuts map an explicit source subdirectory to the clone"

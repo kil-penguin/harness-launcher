@@ -164,8 +164,10 @@ for the session root (see [Claude plugins in isolated sessions](docs/architectur
 
 A profile can set `HARNESS_SESSION_ISOLATION_DEFAULT=1` to route fresh,
 interactive direct-Claude and native-Codex launches into isolation by default.
-Batch, help, diagnostics, gateway/Kiro, and the no-argument launcher TUI remain
-on the legacy path. Claude continuation and fork commands require the exact
+A bare interactive profile command chooses a workspace before the launcher
+collects runtime options: isolated is the default and the current workspace is
+an explicit shared-session choice. Batch, help, diagnostics, and gateway/Kiro
+remain on the legacy path. Claude continuation and fork commands require the exact
 UUID shown at session start, or explicit `--no-isolated` for canonical history. This
 profile setting is a bounded canary switch; it does not change other profiles.
 
@@ -177,6 +179,10 @@ with several possible histories needs an exact UUID in a noninteractive shell.
 Native data is archived separately from disposable roots, and GC retains a root
 until a characterized Native binary verifies the restored full history. See
 [Durable native Codex history](docs/codex-history.md) for limits and recovery.
+
+Release-owned entries can verify an explicit Claude fork without inheriting the
+parent grant or reopening a completed owner; see
+[Explicit Claude fork verification](docs/terminal-runtimes.md#explicit-claude-fork-verification).
 
 The bundled `session-isolation.sh` can submit a session's immutable patch and
 manifest, then integrate it through a locally serialized remote fast-forward

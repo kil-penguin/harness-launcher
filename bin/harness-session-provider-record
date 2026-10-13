@@ -36,11 +36,20 @@ def record():
     directory = os.path.join(state_home(), "sessions", owner)
     if not stat.S_ISDIR(os.lstat(directory).st_mode):
         return
+    origin = os.path.join(directory, "claude-fork-origin.json")
+    if os.path.lexists(origin):
+        from harness_claude_fork import validate_receipt, _read
+        from pathlib import Path
+        receipt = json.loads(_read(Path(origin), private=True))
+        validate_receipt(receipt, owner, _read(Path(directory) / "source-root").decode().strip())
+        if session_id.lower() == receipt["native_id"].lower():
+            return
     line = ("claude %s\n" % session_id).encode("ascii")
     flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK
     fd = os.open(os.path.join(directory, "provider-sessions"), flags, 0o600)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o022:
             return
         with os.fdopen(os.dup(fd), "rb") as handle:
             if line in handle.read().splitlines(True):

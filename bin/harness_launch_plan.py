@@ -346,7 +346,8 @@ def plan(source: Path, runtime: str, preset: str, presets: list[dict], options: 
     context = selected_options.get("context", (selected_grant or {}).get("context", default_context))
     if context not in capability["contexts"]:
         _fail("unsupported_context")
-    permissions, blocked = _permission_selection(runtime, selected_options, selected_grant, selected_session is not None)
+    permission_grant = None if runtime == "claude" and selected_session and selected_session["action"] == "fork" else selected_grant
+    permissions, blocked = _permission_selection(runtime, selected_options, permission_grant, selected_session is not None)
     if runtime=='codex' and capability['approvals']==['on-request']:
         if selected_options.get('approval')=='never':_fail('unsupported_approval')
         if permissions.pop('bypass',None)=='1':permissions['sandbox']='danger-full-access'
