@@ -589,6 +589,22 @@ _harness_launcher_task_value() {
   fi
 }
 
+# _harness_launcher_fork_resume_id <--resume value>
+#   The native session id a Claude --resume value names: a UUID, or the verified
+#   fork locator harness_claude_fork.py rewrites a UUID to (an absolute transcript
+#   path `.../projects/.../<native-uuid>.jsonl`, whose basename is that id). Anything
+#   else, including relative paths and `..`, names no parent.
+_harness_launcher_fork_resume_id() {
+  local value="${1-}" uuid_re='[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}'
+  if [[ "$value" =~ ^${uuid_re}$ ]]; then
+    print -r -- "${(L)value}"
+  elif [[ "$value" =~ ^/.*/projects/.+/${uuid_re}\.jsonl$ && "$value" != *..* && "$value" != *[[:cntrl:]]* ]]; then
+    value="${value:t:r}"
+    [[ "$value" =~ ^${uuid_re}$ ]] && print -r -- "${(L)value}"
+  fi
+  return 0
+}
+
 # _harness_launcher_fork_parent <claude|codex> [args...]
 #   Prints the explicit native session id a fork starts from, or nothing: Claude
 #   `--resume|-r <uuid>` together with `--fork-session`; Codex `fork <uuid>`.
@@ -616,8 +632,8 @@ _harness_launcher_fork_parent() {
     case "$arg" in
       --) break ;;
       --fork-session) fork=true ;;
-      --resume|-r) [[ "${argv[i+1]-}" =~ $uuid_re ]] && id="${(L)argv[i+1]}" ;;
-      --resume=*) [[ "${arg#--resume=}" =~ $uuid_re ]] && id="${(L)${arg#--resume=}}" ;;
+      --resume|-r) id="$(_harness_launcher_fork_resume_id "${argv[i+1]-}")" ;;
+      --resume=*) id="$(_harness_launcher_fork_resume_id "${arg#--resume=}")" ;;
     esac
   done
   $fork && [[ -n "$id" ]] && print -r -- "$id"

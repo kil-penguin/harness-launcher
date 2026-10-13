@@ -70,6 +70,16 @@ run "$TEST_TEMP/c3" "" base --task
 # a fork of an explicit parent records parent_native
 run "$TEST_TEMP/c4" "" base --passthrough --resume $P --fork-session
 case "$(settings_hook "$TEST_TEMP/c4")" in *" --parent-native $P"*) ;; *) fail 'fork parent not recorded' "$TEST_TEMP/c4" ;; esac
+# #114 rewrites a verified fork to `--resume <transcript>/<native-uuid>.jsonl`; the parent is that exact native id
+TP=/home/u/.claude/projects/-proj/$P.jsonl
+run "$TEST_TEMP/c7" "" base --passthrough --permission-mode default --resume $TP --fork-session
+case "$(settings_hook "$TEST_TEMP/c7")" in *" --parent-native $P"*) ;; *) fail 'rewritten fork parent not recorded' "$TEST_TEMP/c7" ;; esac
+for bad in "projects/-proj/$P.jsonl" "/home/u/.claude/projects/../$P.jsonl" "/home/u/.claude/projects/-proj/not-a-uuid.jsonl" "/home/u/.claude/other/$P.jsonl" "/home/u/.claude/projects/-proj/$P.txt"; do
+  run "$TEST_TEMP/c8" "" base --passthrough --resume "$bad" --fork-session
+  case "$(settings_hook "$TEST_TEMP/c8")" in *--parent-native*) fail "unverifiable transcript path gave a parent: $bad" "$TEST_TEMP/c8" ;; esac
+done
+run "$TEST_TEMP/c9" "" base --passthrough --resume $TP
+case "$(settings_hook "$TEST_TEMP/c9")" in *--parent-native*) fail 'a transcript resume without --fork-session is not a fork' "$TEST_TEMP/c9" ;; esac
 run "$TEST_TEMP/c5" "" base --passthrough --resume $P
 case "$(settings_hook "$TEST_TEMP/c5")" in *--parent-native*) fail 'resume is not a fork' "$TEST_TEMP/c5" ;; esac
 # after --passthrough nothing is a launcher keyword
