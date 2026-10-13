@@ -132,9 +132,49 @@ def parse_args(argv):
     parser.add_argument('--model')
     # Validated in validate_agent_args, so a bad value still writes a result.
     for name in ('--agent', '--effort', '--model-endpoint', '--endpoint-key-file', '--max-model-requests',
-                 '--target', '--target-digest', '--task-id', '--approval-sha'):
+                 '--target', '--target-digest', '--task-id', '--approval-sha',
+                 '--journal-board', '--journal-task'):
         parser.add_argument(name)
     return parser.parse_args(argv)
+
+
+JOURNAL_HOOK = '.local/share/harness-service/bin/harness-session-hook'
+JOURNAL_BOARD = re.compile(r'[a-z0-9][a-z0-9_-]{0,63}')
+JOURNAL_TASK = re.compile(r't_[0-9a-f]{8}')
+JOURNAL_TIMEOUT = 3
+
+
+def validate_journal_args(args):
+    """The Kanban board and task of this run (P3-L auto-link): both or neither."""
+    board, task = args.journal_board, args.journal_task
+    if board is None and task is None:
+        return
+    if board is None or task is None:
+        raise Refused('--journal-board and --journal-task go together')
+    if not JOURNAL_BOARD.fullmatch(board) or not JOURNAL_TASK.fullmatch(task):
+        raise Refused('--journal-board/--journal-task have an invalid format')
+
+
+def journal_run_start(args, home):
+    """Tell the optional host collector callback that a Kanban-bound run starts.
+
+    Without both journal arguments nothing happens, so Buzz capture stays off
+    until the caller passes them (and the collector enables the runtime). The
+    payload holds ids only. Fail-open: output is discarded and nothing here can
+    change the run.
+    """
+    if args.journal_board is None or args.journal_task is None:
+        return
+    script = os.path.join(home, JOURNAL_HOOK)
+    if not (os.path.isfile(script) and os.access(script, os.X_OK)):
+        return
+    payload = json.dumps({'hook_event_name': 'RunStart', 'run_id': str(uuid.uuid4()),
+                          'board': args.journal_board, 'task': args.journal_task})
+    try:
+        subprocess.run(['/bin/sh', script, '--runtime', 'buzz'], input=payload.encode(),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=JOURNAL_TIMEOUT, check=False)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
 
 
 def validate_agent_args(args):
@@ -932,6 +972,7 @@ def run(args, result, run_tmp):
     if target:
         result.update(target=target['name'], branch=target['branch'], base_sha=None, pr_url=None)
     codex = validate_agent_args(args)
+    validate_journal_args(args)
     if target:
         load_target(target, os.environ['HOME'])
     if not os.access(LOCKF, os.X_OK):
@@ -955,6 +996,7 @@ def run(args, result, run_tmp):
         validate_caller(caller)
     env = child_env(run_tmp)
     state = state_home(env)
+    journal_run_start(args, os.environ['HOME'])
     log_path = args.result_file + '.log'
     with open(log_path, 'w') as log, tempfile.TemporaryFile('w+') as stdin:
         stdin.write(prompt.rstrip('\n') + '\n\n' + DELIVERY_NOTE + (target_note(target) if target else ''))

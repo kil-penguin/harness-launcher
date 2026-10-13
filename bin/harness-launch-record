@@ -3,13 +3,24 @@
 
   harness-launch-record claude [--source-root R] [--isolated 0|1] [--permission P]
                                [--harness-session-id U] [--context 1m]
-  harness-launch-record codex                     (settings from the environment)
+                               [--task-id U] [--parent-native U] [--callback]
+  harness-launch-record codex [--callback]        (settings from the environment)
   harness-launch-record read <claude|codex> <id>  print the validated record
 
 As a SessionStart hook this command reads the payload on stdin and writes
 <state>/launch-records/<agent>-<session_id> (0600, key=value). It never reads a
 transcript or rollout, and prints nothing (a hook's stdout becomes session
 context). It always exits 0.
+
+Auto-link facts (P3-L): the record also holds the SessionStart `source`, the
+`agent_pid` and `agent_start` (ps lstart, whitespace-collapsed) of the agent
+process found by the ancestry walk, and the launcher's `task_id` (--task) and
+`parent_native` (fork). With --callback the same command then runs the optional
+host collector callback (`~/.local/share/harness-service/bin/harness-session-hook
+--runtime <agent>`) with the same payload, strictly after the record is durable:
+record and callback are one sequential command, no cross-hook ordering is
+assumed. The callback gets what is left of the hook budget, its output is
+discarded and its failure never changes the exit status.
 
 Where the grant comes from:
   claude  arguments of the hook command inside the launcher's own --settings
@@ -34,6 +45,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 import uuid
 
 UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -62,23 +74,42 @@ CHECKS = {
     "harness_session_id": lambda v: UUID.fullmatch(v) is not None,
     # Not a grant (it only sizes the context window), so no rank rules apply.
     "context": lambda v: v == "1m",
+    # Auto-link facts; none of them is a grant.
+    "source": lambda v: v in SOURCES,
+    "agent_pid": lambda v: v.isascii() and v.isdigit() and 0 < int(v) < 2 ** 31,
+    "agent_start": lambda v: AGENT_START.fullmatch(v) is not None,
+    "task_id": lambda v: UUID.fullmatch(v) is not None,
+    "parent_native": lambda v: UUID.fullmatch(v) is not None,
 }
 ORDER = ("permission", "approval", "sandbox", "network", "bypass", "profile",
-         "source_root", "isolated", "harness_session_id", "context")
+         "source_root", "isolated", "harness_session_id", "context",
+         "source", "agent_pid", "agent_start", "task_id", "parent_native")
+# Facts about this one SessionStart event: a nested launch takes them from the
+# new event, never from an older record.
+EVENT_KEYS = ("source", "agent_pid", "agent_start", "task_id", "parent_native")
 ENV_KEYS = {
     "approval": "HARNESS_LAUNCH_APPROVAL", "sandbox": "HARNESS_LAUNCH_SANDBOX",
     "network": "HARNESS_LAUNCH_NETWORK",
     "bypass": "HARNESS_LAUNCH_BYPASS", "profile": "HARNESS_LAUNCH_PROFILE",
     "source_root": "HARNESS_LAUNCH_SOURCE_ROOT", "isolated": "HARNESS_LAUNCH_ISOLATED",
     "harness_session_id": "HARNESS_SESSION_ID",
+    "task_id": "HARNESS_LAUNCH_TASK_ID", "parent_native": "HARNESS_LAUNCH_PARENT_NATIVE",
 }
 CLAUDE_FLAGS = {
     "--permission": "permission", "--source-root": "source_root",
     "--isolated": "isolated", "--harness-session-id": "harness_session_id",
-    "--context": "context",
+    "--context": "context", "--task-id": "task_id", "--parent-native": "parent_native",
 }
 AGENT_NAMES = {"claude", "codex"}
 MAX_HOPS = 64
+# `ps lstart`: "Tue Oct  6 09:05:07 2026" (day space-padded); stored with single spaces.
+LSTART = r"[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d\d:\d\d:\d\d\s+\d{4}"
+AGENT_START = re.compile(r"[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} \d\d:\d\d:\d\d \d{4}")
+PS_LINE = re.compile(r"\s*(\d+)\s+(\d+)\s+(?:(%s)\s+)?(\S.*)" % LSTART)
+HOOK_RELATIVE = ".local/share/harness-service/bin/harness-session-hook"
+# Seconds from this command's start after which the callback is cut off: the
+# combined SessionStart hook timeout is 10, one second stays as margin.
+CALLBACK_DEADLINE = 9.0
 
 
 def state_home():
@@ -144,44 +175,67 @@ def merge_nested(existing, new):
     for key in RANKS:
         if key in new and key in existing and rank_lower(key, new[key], existing[key]):
             merged[key] = new[key]
+    for key in EVENT_KEYS:
+        merged.pop(key, None)
+        if key in new:
+            merged[key] = new[key]
     return merged
 
 
 def ancestry_nested(table, start_pid, max_hops=MAX_HOPS):
     """True when a second agent process sits above the one that ran the hook.
 
-    table maps pid -> (ppid, command). Walking up from start_pid, the first
-    executable whose basename is exactly claude or codex is the agent that ran
-    the hook; any further one above it makes this launch nested. Stops at pid 1,
-    an unknown pid, or max_hops.
+    table maps pid -> (ppid, command[, start]). Walking up from start_pid, the
+    first executable whose basename is exactly claude or codex is the agent that
+    ran the hook; any further one above it makes this launch nested. Stops at
+    pid 1, an unknown pid, or max_hops.
     """
-    pid, owner_seen = start_pid, False
+    return walk_agents(table, start_pid, max_hops)[1]
+
+
+def agent_process(table, start_pid):
+    """(pid, start) of the agent that ran the hook, or (None, None)."""
+    pid = walk_agents(table, start_pid)[0]
+    entry = table.get(pid) if pid else None
+    if entry is None or len(entry) < 3 or entry[2] is None:
+        return None, None
+    return pid, entry[2]
+
+
+def walk_agents(table, start_pid, max_hops=MAX_HOPS):
+    """(pid of the first agent ancestor or None, nested)."""
+    pid, owner = start_pid, None
     for _ in range(max_hops):
         if pid <= 1 or pid not in table:
-            return False
-        ppid, command = table[pid]
+            return owner, False
+        ppid, command = table[pid][:2]
         if os.path.basename(command) in AGENT_NAMES:
-            if owner_seen:
-                return True
-            owner_seen = True
+            if owner is not None:
+                return owner, True
+            owner = pid
         pid = ppid
-    return False
+    return owner, False
 
 
 def process_table(path=None):
-    """pid -> (ppid, command) from a fixture file or the live `ps`; None if unreadable."""
+    """pid -> (ppid, command, start) from a fixture file or the live `ps`; None if unreadable.
+
+    start is the whitespace-collapsed lstart, None for a fixture line without one.
+    """
     try:
         if path:
             with open(path, encoding="utf-8") as stream:
                 text = stream.read()
         else:
-            text = subprocess.run(["ps", "-axo", "pid=,ppid=,comm="], capture_output=True,
-                                  text=True, timeout=5, check=True).stdout
+            text = subprocess.run(["ps", "-axo", "pid=,ppid=,lstart=,comm="], capture_output=True,
+                                  text=True, timeout=5, check=True,
+                                  env=dict(os.environ, LC_ALL="C")).stdout
         table = {}
         for line in text.splitlines():
-            parts = line.split(None, 2)
-            if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
-                table[int(parts[0])] = (int(parts[1]), parts[2].strip())
+            match = PS_LINE.fullmatch(line)
+            if match:
+                start = " ".join(match.group(3).split()) if match.group(3) else None
+                table[int(match.group(1))] = (int(match.group(2)), match.group(4).strip(), start)
         return table
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
@@ -197,7 +251,7 @@ def launch_nested(pstable, start_pid):
 def launch_settings(agent):
     """(fields, pstable, start_pid) for this launch: arguments (claude) or environment (codex)."""
     raw, pstable, start_pid = {}, None, os.getpid()
-    args = sys.argv[2:]
+    args = [a for a in sys.argv[2:] if a != "--callback"]
     if len(args) % 2:
         return None, None, start_pid
     for flag, value in zip(args[0::2], args[1::2]):
@@ -215,8 +269,8 @@ def launch_settings(agent):
     return fields, pstable, start_pid
 
 
-def write(agent):
-    payload = json.loads(sys.stdin.read())
+def write(agent, raw=None):
+    payload = json.loads(sys.stdin.read() if raw is None else raw)
     if not isinstance(payload, dict) or payload.get("hook_event_name") != "SessionStart":
         return
     session_id = payload.get("session_id")
@@ -228,11 +282,18 @@ def write(agent):
     fields, pstable, start_pid = launch_settings(agent)
     if fields is None or "source_root" not in fields or "isolated" not in fields:
         return
+    fields["source"] = payload["source"]
     dir_fd = open_records_dir(create=True)
     if dir_fd is None:
         return
     try:
-        if launch_nested(pstable, start_pid):
+        table = process_table(pstable)
+        if table is not None:
+            pid, start = agent_process(table, start_pid)
+            if pid is not None:
+                fields["agent_pid"], fields["agent_start"] = str(pid), start
+        # An unreadable process table counts as nested: it can only withhold a grant.
+        if table is None or ancestry_nested(table, start_pid):
             fields = merge_nested(read_fields(dir_fd, name), fields)
         text = "".join("%s=%s\n" % (k, fields[k]) for k in ORDER if k in fields)
         temp = ".tmp-%s" % uuid.uuid4().hex
@@ -240,9 +301,11 @@ def write(agent):
         try:
             try:
                 os.write(fd, text.encode("utf-8"))
+                os.fsync(fd)
             finally:
                 os.close(fd)
             os.replace(temp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            os.fsync(dir_fd)
         except BaseException:
             try:
                 os.unlink(temp, dir_fd=dir_fd)
@@ -267,13 +330,42 @@ def read(agent, session_id):
     return ["%s=%s" % (key, found[key]) for key in ORDER if key in found]
 
 
+def run_callback(agent, raw, started):
+    """Run the optional host collector callback with this hook's payload.
+
+    Output is discarded and nothing here can fail the hook. The callback gets
+    what is left of CALLBACK_DEADLINE (at least half a second).
+    """
+    script = os.path.join(os.path.expanduser("~"), HOOK_RELATIVE)
+    if not (os.path.isfile(script) and os.access(script, os.X_OK)):
+        return
+    remaining = max(0.5, CALLBACK_DEADLINE - (time.monotonic() - started))
+    try:
+        subprocess.run(["/bin/sh", script, "--runtime", agent], input=raw.encode("utf-8"),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=remaining, check=False)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+
+
+def hook(agent):
+    started = time.monotonic()
+    raw = sys.stdin.read()
+    try:
+        write(agent, raw)
+    except Exception:
+        pass
+    if "--callback" in sys.argv[2:]:
+        run_callback(agent, raw, started)
+
+
 def main(argv):
     if len(argv) == 4 and argv[1] == "read":
         lines = read(argv[2], argv[3])
         if lines:
             sys.stdout.write("\n".join(lines) + "\n")
     elif len(argv) >= 2 and argv[1] in AGENTS:
-        write(argv[1])
+        hook(argv[1])
 
 
 if __name__ == "__main__":

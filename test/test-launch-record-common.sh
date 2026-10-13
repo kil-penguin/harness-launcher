@@ -54,13 +54,24 @@ HARNESS_SESSION_ROOT=/s harness_launch_record_export_codex /r on-request workspa
 harness_launch_record_export_codex /r never workspace-write "" base disabled
 [ "$HARNESS_LAUNCH_NETWORK" = disabled ] || fail 'explicit network must reach the hook'
 
+# task / parent for auto-link (Codex through the environment, Claude through hook arguments)
+export HARNESS_LAUNCH_TASK_ID=stale HARNESS_LAUNCH_PARENT_NATIVE=stale
+harness_launch_record_export_codex /r "" "" "" ""
+[ -z "${HARNESS_LAUNCH_TASK_ID+x}${HARNESS_LAUNCH_PARENT_NATIVE+x}" ] || fail 'inherited task/parent not dropped'
+T=cccccccc-dddd-4eee-8fff-000000000b02; P=dddddddd-eeee-4fff-8000-000000000c03
+harness_launch_record_export_codex /r "" "" "" "" "" "$T" "$P"
+[ "$HARNESS_LAUNCH_TASK_ID" = "$T" ] && [ "$HARNESS_LAUNCH_PARENT_NATIVE" = "$P" ] || fail 'task/parent export'
+harness_launch_record_export_codex /r "" "" "" "" "" "not-a-uuid" "../x"
+[ -z "${HARNESS_LAUNCH_TASK_ID+x}${HARNESS_LAUNCH_PARENT_NATIVE+x}" ] || fail 'invalid task/parent exported'
+unset HARNESS_LAUNCH_TASK_ID HARNESS_LAUNCH_PARENT_NATIVE
+
 # harness_claude_launch_settings
 hook_of() { "$PY" -c 'import json,sys; print(json.loads(sys.argv[1])["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$1"; }
 run_hook() { # <command> <session-id>
   printf '{"hook_event_name":"SessionStart","source":"startup","session_id":"%s"}' "$2" \
     | HARNESS_SESSION_STATE_HOME="$TMP/state-$SHELL_NAME" /bin/sh -c "$1 --pstable $TMP/ps-clean --start-pid 1000"
 }
-record_of() { HARNESS_SESSION_STATE_HOME="$TMP/state-$SHELL_NAME" "$PY" "$ROOT/bin/harness-launch-record" read claude "$1"; }
+record_of() { HARNESS_SESSION_STATE_HOME="$TMP/state-$SHELL_NAME" "$PY" "$ROOT/bin/harness-launch-record" read claude "$1" | grep -Ev '^(source|agent_pid|agent_start|task_id|parent_native)='; }
 s="$(harness_claude_launch_settings "$ROOT/bin" "$WEIRD" true bypassPermissions 1m)"
 "$PY" -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["alwaysThinkingEnabled"] is True' "$s" || fail "settings JSON: $s"
 id=0d5d1f3e-0000-4000-8000-0000000000c1
@@ -76,6 +87,10 @@ s="$(HARNESS_SESSION_ROOT=/s HARNESS_SESSION_ID='x;id' harness_claude_launch_set
 case "$(hook_of "$s")" in *--harness-session-id*) fail 'a non-UUID session id must not be passed' ;; esac
 [ -z "$(harness_claude_launch_settings "$ROOT/bin" "$(printf '/r\033x')" false plan "")" ] || fail 'a control character must drop the hook'
 [ -z "$(harness_claude_launch_settings "$TMP/no-bin" /r false plan "")" ] || fail 'no hook script must print nothing'
+s="$(harness_claude_launch_settings "$ROOT/bin" /r false plan "" /r "$T" "$P")"
+case "$(hook_of "$s")" in *" --task-id $T"*" --parent-native $P"*) ;; *) fail "task/parent not passed to the hook: $(hook_of "$s")" ;; esac
+s="$(harness_claude_launch_settings "$ROOT/bin" /r false plan "" /r "x y" "../x")"
+case "$(hook_of "$s")" in *--task-id*|*--parent-native*) fail 'invalid task/parent reached the hook' ;; esac
 # The grant binds the canonical source, while opt-in follows the session snapshot.
 mkdir -p "$TMP/session/config"
 printf '{"enabled":true}\n' > "$TMP/session/config/ssot-session-hooks.json"

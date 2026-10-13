@@ -12,8 +12,8 @@ Other runtime integrations keep their existing launcher.env opt-ins. In isolated
 sessions the opt-in comes from that session snapshot; the launch record still
 binds to the canonical source root even when its checkout is older.
 
-Claude launch settings and generated Codex hooks append UserPromptSubmit and
-Stop callbacks after existing hooks. They invoke the optional host callback
+Claude launch settings and generated Codex hooks append UserPromptSubmit,
+Stop and SubagentStart callbacks after existing hooks. They invoke the optional host callback
 `$HOME/.local/share/harness-service/bin/harness-session-hook` with
 `--runtime claude` or `--runtime codex`. Both callbacks discard output and errors
 and always exit successfully, including when the host callback is absent.
@@ -32,3 +32,44 @@ Remove the JSON file or set enabled to false to disable future callbacks, then
 regenerate the Codex home and refresh native hook trust. Already running,
 pinned sessions retain their original hooks. No hook is added to other profiles
 by installing this launcher release.
+
+## Automatic session linking (P3-L, launcher side)
+
+The same opt-in also links each native session to a common Task. The launcher
+only produces facts; the host callback decides what to capture and send.
+
+- `SessionStart` is the callback's session-start event. When the profile also
+  has the launch record hook (`HARNESS_LAUNCH_RECORD_HOOKS=1` for Codex, always
+  for Claude), there is exactly ONE `SessionStart` command: the record helper
+  writes `<state>/launch-records/<agent>-<session_id>` durably (file and
+  directory fsync, atomic replace) and then runs
+  `harness-session-hook --runtime <agent>` with the same payload
+  (`harness-launch-record <agent> ... --callback`). No hook ordering is assumed
+  and no second `SessionStart` row is written next to it. Without the launch
+  record hook the ssot row adds a callback-only `SessionStart`.
+- `SubagentStart` runs the callback only (no record step).
+- Timeouts: the combined `SessionStart` command is 10 seconds (it was 5 for the
+  record alone), because the record helper keeps its own 5 second limit for the
+  single process-table read and the callback gets what is left (it is cut off
+  one second before the hook limit). `SubagentStart` stays 5. Profiles without
+  the ssot opt-in keep the old 5 second record-only row. The hook prints
+  nothing and exits 0 even when the callback is missing, slow or failing.
+- The record gains `source` (the `SessionStart` source), `agent_pid` and
+  `agent_start` (the agent process found by the ancestry walk and its `ps`
+  start time with single spaces; they are omitted when the process table cannot
+  be read), `task_id` and `parent_native`. The helper still reads the process
+  table once (`ps -axo pid=,ppid=,lstart=,comm=`, 5 second limit); an unreadable
+  table still counts as nested and withholds the grant. The collector derives the
+  process key from `agent_pid` and `agent_start`; it does not run `ps` again.
+- `--task <uuid>` (launcher keyword, before `--passthrough`) names the Task for
+  this session. Claude receives it as the hook argument `--task-id`, Codex as
+  `HARNESS_LAUNCH_TASK_ID`; neither is read from settings `env`. A fork of an
+  explicit parent (`--fork-session` with `--resume <uuid>` for Claude, `fork
+  <uuid>` after `--passthrough` for Codex) records `parent_native`.
+- `harness-headless --journal-board <board> --journal-task <t_xxxxxxxx>`
+  (together, or neither) runs the callback once with `--runtime buzz` and a
+  `RunStart` payload of ids only. Without both arguments nothing is sent; the
+  collector additionally drops runtimes that are not enabled.
+
+Hook trust: changed Codex hook commands and timeouts need a new Codex hook trust
+approval per profile (see above). Claude hooks have no trust step.

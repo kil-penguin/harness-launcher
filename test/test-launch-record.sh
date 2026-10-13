@@ -33,7 +33,9 @@ rec() {
   RC=$?
 }
 event() { printf '{"hook_event_name":"%s","source":"%s","session_id":"%s"}' "$1" "$2" "$3"; }
-read_rec() { OUT="$(HARNESS_SESSION_STATE_HOME="$STATE" "$PY" "$WRITER" read "$1" "$2" 2>&1)"; RC=$?; }
+read_full() { OUT="$(HARNESS_SESSION_STATE_HOME="$STATE" "$PY" "$WRITER" read "$1" "$2" 2>&1)"; RC=$?; }
+# read_rec: the grant/placement fields only (the auto-link process fields have their own checks below)
+read_rec() { read_full "$1" "$2"; OUT="$(printf '%s\n' "$OUT" | grep -Ev '^(source|agent_pid|agent_start|task_id|parent_native)=' || true)"; }
 mode_of() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
 LAUNCH=(--source-root /srv/harness --isolated 0)
 
@@ -385,5 +387,142 @@ printf 'permission=bypassPermissions\npermission=plan\nevil=1\nsandbox=rm -rf\ns
   > "$STATE/launch-records/claude-88888888-2222-4333-8444-555555555555"
 read_rec claude 88888888-2222-4333-8444-555555555555
 [[ "$OUT" == $'permission=plan\nsource_root=/a' ]] || fail "tampered record not filtered: [$OUT]"
+
+# --- P3-L auto-link record fields -------------------------------------------------
+# A live-format table: pid ppid lstart(5 words) comm. The agent process is the
+# first claude/codex ancestor of the hook (here pid 998).
+LIVE="$TMP/ps-live"
+cat > "$LIVE" <<'PS'
+ 1000   999 Tue Oct 13 10:00:03 2026 /opt/homebrew/bin/python3
+  999   998 Tue Oct 13 10:00:02 2026 /bin/sh
+  998   997 Tue Oct  6 09:05:07 2026 claude
+  997   996 Tue Oct 13 09:00:00 2026 -zsh
+  996     1 Tue Oct 13 08:00:00 2026 /Applications/herdr.app/Contents/MacOS/herdr
+    1     0 Tue Oct 13 07:00:00 2026 /sbin/launchd
+PS
+AL=bbbbbbbb-cccc-4ddd-8eee-000000000a01
+TID=cccccccc-dddd-4eee-8fff-000000000b02
+PAR=dddddddd-eeee-4fff-8000-000000000c03
+PSARGS=(--pstable "$LIVE" --start-pid 1000)
+rec claude "$(event SessionStart fork $AL)" -- "${LAUNCH[@]}" --task-id $TID --parent-native $PAR
+[[ $RC == 0 && -z "$OUT" ]] || fail "autolink write: rc=$RC out=$OUT"
+read_full claude $AL
+[[ "$OUT" == *$'\nsource=fork'* && "$OUT" == *$'\nagent_pid=998'* && "$OUT" == *$'\nagent_start=Tue Oct 6 09:05:07 2026'* \
+   && "$OUT" == *$'\ntask_id='"$TID"* && "$OUT" == *$'\nparent_native='"$PAR"* ]] || fail "autolink fields: [$OUT]"
+[[ "$OUT" == source_root=* ]] || fail "grant/placement fields must stay first: [$OUT]"
+# codex: task and parent come from the launcher environment
+rec codex "$(event SessionStart startup $AL)" HARNESS_LAUNCH_SOURCE_ROOT=/srv/harness HARNESS_LAUNCH_ISOLATED=0 HARNESS_LAUNCH_TASK_ID=$TID HARNESS_LAUNCH_PARENT_NATIVE=$PAR
+read_full codex $AL
+[[ "$OUT" == *"task_id=$TID"* && "$OUT" == *"parent_native=$PAR"* ]] || fail "codex task/parent: [$OUT]"
+# invalid task / parent are dropped; a 3-column table (no lstart) records no process
+rec claude "$(event SessionStart startup $AL)" -- "${LAUNCH[@]}" --task-id 'not-a-uuid' --parent-native '../x'
+read_full claude $AL
+[[ "$OUT" != *task_id=* && "$OUT" != *parent_native=* ]] || fail "invalid task/parent kept: [$OUT]"
+PSARGS=(--pstable "$CLEAN" --start-pid 1000)
+rec claude "$(event SessionStart startup $AL)" -- "${LAUNCH[@]}"
+read_full claude $AL
+[[ "$OUT" == *source=startup* && "$OUT" != *agent_pid=* && "$OUT" != *agent_start=* ]] || fail "no lstart must record no process: [$OUT]"
+# a nested launch keeps the placement/grant rules but takes this event's process fields
+PSARGS=(--pstable "$LIVE" --start-pid 1000)
+rec claude "$(event SessionStart startup $AL)" -- "${LAUNCH[@]}" --permission plan
+rec claude "$(event SessionStart resume $AL)" -- "${LAUNCH[@]}" --permission bypassPermissions --task-id $TID
+read_full claude $AL
+[[ "$OUT" == *source=resume* && "$OUT" == *agent_pid=998* && "$OUT" == *"task_id=$TID"* ]] || fail "top-level rewrite: [$OUT]"
+# the record is durable: file and directory are fsynced before the replace is trusted
+"$PY" - "$WRITER" "$STATE" "$LIVE" <<'PYEOF' || fail 'record write is not fsynced'
+import importlib.machinery, importlib.util, io, os, sys
+loader = importlib.machinery.SourceFileLoader("launch_record", sys.argv[1])
+spec = importlib.util.spec_from_loader("launch_record", loader)
+mod = importlib.util.module_from_spec(spec)
+loader.exec_module(mod)
+os.environ["HARNESS_SESSION_STATE_HOME"] = sys.argv[2]
+sys.argv = ["harness-launch-record", "claude", "--source-root", "/srv/harness", "--isolated", "0",
+            "--pstable", sys.argv[3], "--start-pid", "1000"]
+sys.stdin = io.StringIO('{"hook_event_name":"SessionStart","source":"startup","session_id":"55555555-aaaa-4bbb-8ccc-0000000000aa"}')
+calls = []
+real = os.fsync
+os.fsync = lambda fd: (calls.append(os.fstat(fd).st_mode & 0o170000), real(fd))[1]
+try:
+    mod.write("claude")
+finally:
+    os.fsync = real
+import stat
+assert stat.S_IFREG in calls and stat.S_IFDIR in calls, calls
+PYEOF
+
+# ps: one call, widened columns, timeout still 5s; an unreadable table is still nested
+"$PY" - "$WRITER" <<'PYEOF' || fail 'process table call'
+import importlib.machinery, importlib.util, subprocess, sys
+loader = importlib.machinery.SourceFileLoader("launch_record", sys.argv[1])
+spec = importlib.util.spec_from_loader("launch_record", loader)
+mod = importlib.util.module_from_spec(spec)
+loader.exec_module(mod)
+seen = []
+real = subprocess.run
+def fake(cmd, **kw):
+    seen.append((cmd, kw))
+    return subprocess.CompletedProcess(cmd, 0, stdout=" 5 1 Tue Oct 13 10:00:03 2026 /x/codex\n 1 0 Mon Oct  5 01:02:03 2026 /sbin/launchd\n")
+subprocess.run = fake
+table = mod.process_table()
+assert len(seen) == 1, seen
+assert seen[0][0] == ["ps", "-axo", "pid=,ppid=,lstart=,comm="], seen[0][0]
+assert seen[0][1]["timeout"] == 5, seen[0][1]
+assert table[5][0] == 1 and table[5][1] == "/x/codex" and table[5][2] == "Tue Oct 13 10:00:03 2026", table
+assert table[1][2] == "Mon Oct 5 01:02:03 2026", table
+for exc in (subprocess.TimeoutExpired("ps", 5), subprocess.CalledProcessError(1, "ps"), OSError()):
+    def boom(cmd, **kw): raise exc
+    subprocess.run = boom
+    assert mod.process_table() is None
+    assert mod.launch_nested(None, 1000) is True
+subprocess.run = real
+PYEOF
+# unreadable table: nested -> no grant is written for a new record
+PSARGS=(--pstable "$TMP/does-not-exist" --start-pid 1000)
+rec claude "$(event SessionStart startup eeeeeeee-1111-4222-8333-000000000d04)" -- "${LAUNCH[@]}" --permission bypassPermissions
+read_rec claude eeeeeeee-1111-4222-8333-000000000d04
+[[ "$OUT" == $'source_root=/srv/harness\nisolated=0' ]] || fail "unreadable table still granted: [$OUT]"
+
+# --- callback (record -> collector callback, one sequential command) ---------------
+CB_HOME="$TMP/cbhome"; mkdir -p "$CB_HOME/.local/share/harness-service/bin"
+CB="$CB_HOME/.local/share/harness-service/bin/harness-session-hook"
+cat > "$CB" <<'SH'
+#!/bin/sh
+{ printf 'args=%s\n' "$*"; ls "$HARNESS_SESSION_STATE_HOME/launch-records" | tr '\n' ' '; printf '\n'; cat; } > "$HOME/cb-out"
+echo noisy-stdout; echo noisy-stderr >&2
+exit 2
+SH
+chmod 755 "$CB"
+PAYLOAD="$(event SessionStart startup 99999999-aaaa-4bbb-8ccc-0000000000cb)"
+PSARGS=(--pstable "$CLEAN" --start-pid 1000)
+rec claude "$PAYLOAD" HOME="$CB_HOME" -- "${LAUNCH[@]}" --callback
+[[ $RC == 0 && -z "$OUT" ]] || fail "callback hook must print nothing and exit 0: rc=$RC out=[$OUT]"
+[[ -f "$CB_HOME/cb-out" ]] || fail 'callback was not run'
+grep -q '^args=--runtime claude$' "$CB_HOME/cb-out" || fail "callback args: $(head -1 "$CB_HOME/cb-out")"
+grep -q 'claude-99999999-aaaa-4bbb-8ccc-0000000000cb' "$CB_HOME/cb-out" || fail 'callback ran before the record was written'
+tail -1 "$CB_HOME/cb-out" | grep -qF "$PAYLOAD" || fail 'callback did not receive the payload'
+rm -f "$CB_HOME/cb-out"
+rec claude "$PAYLOAD" HOME="$CB_HOME" -- "${LAUNCH[@]}"
+[[ ! -e "$CB_HOME/cb-out" ]] || fail 'callback ran without --callback'
+rec codex "$PAYLOAD" HOME="$CB_HOME" HARNESS_LAUNCH_SOURCE_ROOT=/srv/harness HARNESS_LAUNCH_ISOLATED=0 -- --callback
+[[ $RC == 0 && -z "$OUT" ]] || fail "codex callback: rc=$RC out=[$OUT]"
+grep -q '^args=--runtime codex$' "$CB_HOME/cb-out" || fail 'codex callback args'
+# missing callback and an invalid record both stay silent and successful
+rm "$CB"
+rec claude "$PAYLOAD" HOME="$CB_HOME" -- "${LAUNCH[@]}" --callback
+[[ $RC == 0 && -z "$OUT" ]] || fail "missing callback: rc=$RC out=[$OUT]"
+# a hanging callback is cut off at the deadline and the hook still succeeds
+printf '#!/bin/sh\nexec sleep 30\n' > "$CB"; chmod 755 "$CB"
+HOME="$CB_HOME" "$PY" - "$WRITER" <<'PYEOF' || fail 'hanging callback not cut off'
+import importlib.machinery, importlib.util, sys, time
+loader = importlib.machinery.SourceFileLoader("launch_record", sys.argv[1])
+spec = importlib.util.spec_from_loader("launch_record", loader)
+mod = importlib.util.module_from_spec(spec)
+loader.exec_module(mod)
+assert mod.CALLBACK_DEADLINE == 9.0
+mod.CALLBACK_DEADLINE = 1.0
+t = time.monotonic()
+mod.run_callback("claude", "{}", t)
+assert time.monotonic() - t < 4, time.monotonic() - t
+PYEOF
 
 echo 'PASS: launch record'

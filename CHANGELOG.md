@@ -2,6 +2,12 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## Unreleased
+
+- Add the launcher half of automatic session linking. With the ssot opt-in, Codex and Claude run the launch record and then the host collector callback as one `SessionStart` command (timeout 10, was 5) and add a callback-only `SubagentStart` hook (timeout 5). The record helper keeps its single process-table read and 5 second limit, widened to `pid,ppid,lstart,comm`; an unreadable table still withholds the grant. The record is now fsynced and gains `source`, `agent_pid`, `agent_start`, `task_id` and `parent_native`. Profiles without the ssot opt-in are unchanged.
+- Add the launcher keyword `--task <uuid>` (Claude hook argument, Codex `HARNESS_LAUNCH_TASK_ID`), record the parent session of an explicit fork, and add `harness-headless --journal-board/--journal-task` for the Buzz run-start callback (inert unless both are given).
+- Codex hook trust must be approved again for every ssot profile: with the launch record hook the `SessionStart` command and timeout change, and a `SubagentStart` hook (plus a callback-only `SessionStart` without the record hook) is added.
+
 ## 0.54.1 — 2026-10-14
 
 - The Kiro authenticated-HTTP bridge runs `mcp-remote@latest` instead of the 0.14.2 pin, so it follows registry releases like the harness package-runner MCPs. `${VAR}` header substitution from the inherited environment was re-verified on 0.14.2 and 0.14.3; the credential still reaches neither argv nor a generated file.

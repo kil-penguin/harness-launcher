@@ -242,4 +242,15 @@ class CallbackMappingSafetyTests(unittest.TestCase):
             (current/name).write_bytes(b'changed callback')
             with self.assertRaises((OSError,ValueError)):m.approved_package_command(command,grant)
 
+    def test_launch_record_callback_shape_is_accepted_only_exactly(self):
+        spec=importlib.util.spec_from_file_location('callback_shape',ROOT/'bin/codex-hook-trust.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+        path=ROOT/'bin/harness-launch-record'
+        grant={'callbacks':{str(path):hashlib.sha256(path.read_bytes()).hexdigest()}}
+        for tail in ('codex','codex --callback'):
+            command='python3 '+str(path)+' '+tail
+            self.assertEqual(m.approved_package_command(command,grant),command)
+        for tail in ('codex --callback extra','codex --other','claude --callback','--callback'):
+            with self.assertRaises((OSError,ValueError)):
+                m.approved_package_command('python3 '+str(path)+' '+tail,grant)
+
 if __name__ == '__main__': unittest.main()

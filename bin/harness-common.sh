@@ -191,36 +191,45 @@ harness_launch_source_root() {
   (cd -P -- "$HARNESS_DIR" 2>/dev/null && pwd -P) || printf '%s\n' "$HARNESS_DIR"
 }
 
-# harness_launch_record_export_codex <source-root> <approval> <sandbox> <bypass> <profile> [network]
+# harness_launch_record_export_codex <source-root> <approval> <sandbox> <bypass> <profile> [network] [task-id] [parent-native]
 #   Codex only; run in the process that execs the agent. Exports the grant and
 #   profile it is launched with, its source root and isolation, for the
 #   launch-record hook (its hooks.json row is static, so it reads the
-#   environment). Anything inherited from a parent launch is dropped first.
+#   environment). A valid task-id / parent-native UUID (P3-L auto-link) is
+#   exported for the same hook. Anything inherited from a parent launch is
+#   dropped first.
 #   Claude does not use this: its hook takes the same facts as arguments,
 #   because Claude applies an agent-writable `env` block from settings.
 harness_launch_record_export_codex() {
-  unset HARNESS_LAUNCH_PERMISSION HARNESS_LAUNCH_APPROVAL HARNESS_LAUNCH_SANDBOX HARNESS_LAUNCH_NETWORK HARNESS_LAUNCH_BYPASS HARNESS_LAUNCH_PROFILE
+  unset HARNESS_LAUNCH_PERMISSION HARNESS_LAUNCH_APPROVAL HARNESS_LAUNCH_SANDBOX HARNESS_LAUNCH_NETWORK HARNESS_LAUNCH_BYPASS HARNESS_LAUNCH_PROFILE HARNESS_LAUNCH_TASK_ID HARNESS_LAUNCH_PARENT_NATIVE
+  local uuid_re='^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
   [ -z "$2" ] || export HARNESS_LAUNCH_APPROVAL="$2"
   [ -z "$3" ] || export HARNESS_LAUNCH_SANDBOX="$3"
   [ -z "$4" ] || export HARNESS_LAUNCH_BYPASS="$4"
   [ -z "$5" ] || export HARNESS_LAUNCH_PROFILE="$5"
   [ -z "${6:-}" ] || export HARNESS_LAUNCH_NETWORK="$6"
+  if [[ "${7:-}" =~ $uuid_re ]]; then export HARNESS_LAUNCH_TASK_ID="$7"; fi
+  if [[ "${8:-}" =~ $uuid_re ]]; then export HARNESS_LAUNCH_PARENT_NATIVE="$8"; fi
   export HARNESS_LAUNCH_SOURCE_ROOT="$1"
   export HARNESS_LAUNCH_ISOLATED=0
   [ -z "${HARNESS_SESSION_ROOT:-}" ] || HARNESS_LAUNCH_ISOLATED=1
   return 0
 }
 
-# harness_claude_launch_settings <bin-dir> <source-root> <force-thinking:true|false> <permission> <context> [config-root]
+# harness_claude_launch_settings <bin-dir> <source-root> <force-thinking:true|false> <permission> <context> [config-root] [task-id] [parent-native]
 #   Prints the one launcher-owned --settings JSON: the forced-thinking setting
 #   (xhigh/max) merged with the SessionStart hook that writes the launch record.
 #   The grant, source root and isolation are ARGUMENTS of the hook command, not
 #   environment, so a forged `env` block in settings.local.json cannot change
 #   them. An unknown permission records no grant. The hook prints nothing (its
 #   stdout would become session context). Prints nothing when there is nothing
-#   to set.
+#   to set. A profile with the ssot opt-in gets the host collector callback as
+#   the tail of the SAME SessionStart command (record, then callback; timeout
+#   10 instead of 5) and a callback-only SubagentStart hook. A valid task-id or
+#   parent-native UUID is recorded by the hook (P3-L auto-link).
 harness_claude_launch_settings() {
   local hook="$1/harness-launch-record" py cmd out="" isolated=0 perm="" hooks="" optins="" config_root="${6:-$2}"
+  local ssot=0 session_timeout=5
   local uuid_re='^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
   [ -z "${HARNESS_SESSION_ROOT:-}" ] || isolated=1
   [ "$3" = true ] && out='"alwaysThinkingEnabled":true'
@@ -229,24 +238,26 @@ harness_claude_launch_settings() {
     cmd="$(harness_shell_word "$py") $(harness_shell_word "$hook") claude --source-root $(harness_shell_word "$2") --isolated $isolated"
     [ -z "$perm" ] || cmd="$cmd --permission $perm"
     [ "$5" != 1m ] || cmd="$cmd --context 1m"
+    [[ "${7:-}" =~ $uuid_re ]] && cmd="$cmd --task-id $7"
+    [[ "${8:-}" =~ $uuid_re ]] && cmd="$cmd --parent-native $8"
+    if [ -f "$1/runtime_hooks_optin.py" ]; then
+      optins="$("$py" "$1/runtime_hooks_optin.py" "$config_root" 2>/dev/null)"
+      case " $optins " in *" ssot=1 "*) ssot=1; session_timeout=10 ;; esac
+    fi
     if [ "$isolated" = 1 ] && [[ "${HARNESS_SESSION_ID:-}" =~ $uuid_re ]]; then
       cmd="$cmd --harness-session-id $HARNESS_SESSION_ID"
     fi
+    [ "$ssot" != 1 ] || cmd="$cmd --callback"
     # A control character would break the hand-built JSON; record nothing instead.
     case "$cmd" in
       *[[:cntrl:]]*) ;;
-      *) hooks="\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$(harness_json_escape "$cmd")\",\"timeout\":5}]}]" ;;
+      *) hooks="\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$(harness_json_escape "$cmd")\",\"timeout\":$session_timeout}]}]" ;;
     esac
-    if [ -f "$1/runtime_hooks_optin.py" ]; then
-      optins="$("$py" "$1/runtime_hooks_optin.py" "$config_root" 2>/dev/null)"
-      case " $optins " in
-        *" ssot=1 "*)
-          cmd="/bin/sh -c 's=\"\$HOME/.local/share/harness-service/bin/harness-session-hook\"; [ -x \"\$s\" ] && { /bin/sh \"\$s\" --runtime claude >/dev/null 2>&1; exit 0; }; cat >/dev/null'"
-          local event entry
-          entry="[{\"hooks\":[{\"type\":\"command\",\"command\":\"$(harness_json_escape "$cmd")\",\"timeout\":5}]}]"
-          for event in UserPromptSubmit Stop; do hooks="$hooks${hooks:+,}\"$event\":$entry"; done
-          ;;
-      esac
+    if [ "$ssot" = 1 ]; then
+      cmd="/bin/sh -c 's=\"\$HOME/.local/share/harness-service/bin/harness-session-hook\"; [ -x \"\$s\" ] && { /bin/sh \"\$s\" --runtime claude >/dev/null 2>&1; exit 0; }; cat >/dev/null'"
+      local event entry
+      entry="[{\"hooks\":[{\"type\":\"command\",\"command\":\"$(harness_json_escape "$cmd")\",\"timeout\":5}]}]"
+      for event in UserPromptSubmit Stop SubagentStart; do hooks="$hooks${hooks:+,}\"$event\":$entry"; done
     fi
   fi
   [ -z "$hooks" ] || out="$out${out:+,}\"hooks\":{$hooks}"

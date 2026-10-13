@@ -89,7 +89,7 @@ generates the same `hooks.json`.
 | --- | --- | --- | --- | --- | --- |
 | orca | `HARNESS_ORCA_AGENT_HOOKS=1` | `$HOME/.orca/agent-hooks/codex-hook.sh` | `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop` | none | 5 |
 | herdr | `HARNESS_HERDR_AGENT_HOOKS=1` | `$HOME/.codex/herdr-agent-state.sh` | `SessionStart` | `session` | 10 |
-| launch_record | `HARNESS_LAUNCH_RECORD_HOOKS=1` | `harness-launch-record codex` (launcher-owned) | `SessionStart` | none | 5 |
+| launch_record | `HARNESS_LAUNCH_RECORD_HOOKS=1` | `harness-launch-record codex` (launcher-owned) | `SessionStart` | none (`--callback` and timeout 10 when the ssot opt-in is also on) | 5 |
 
 The `orca` and `herdr` rows run the same status-only, fail-open command:
 
@@ -291,7 +291,9 @@ can write. They come only from the **launch record**:
   opens the same way and also requires a regular file owned by the current user
   with a single link. Keys: `permission`, `approval`, `sandbox`, `bypass`,
   `profile=<name>`, `source_root`, `isolated=0|1`, `harness_session_id`,
-  `context=1m`; each value
+  `context=1m`, and for automatic session linking (see
+  [session-collector](session-collector.md)) `source`, `agent_pid`,
+  `agent_start`, `task_id`, `parent_native`; each value
   is checked against a fixed vocabulary before it is written or read.
 - Claude: the hook rides the launcher's own `--settings`, merged with the forced
   thinking setting into one JSON (`{"alwaysThinkingEnabled":true,"hooks":{...}}`).

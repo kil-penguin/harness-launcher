@@ -149,7 +149,7 @@ def approved_package_command(command, grant):
     shapes = {"codex-hook-adapter.sh": (len(tokens) == 4 and tokens[0] == "bash"),
               "codex-pretool-adapter.py": len(tokens) == 3,
               "codex-cmux-title-sync.py": len(tokens) == 2,
-              "harness-launch-record": (len(tokens) == 3 and tokens[2] == "codex")}
+              "harness-launch-record": tokens[2:] in (["codex"], ["codex", "--callback"])}
     if not shapes[name] or path not in {Path(__file__).parent / name, Path(__file__).resolve().parent / name}:
         raise ValueError("callback outside current verified package")
     approved = [p for p in grant["callbacks"] if Path(p).name == name]
@@ -233,9 +233,10 @@ def equivalent_command(command, desired, source, target, base, grant):
                     ">/dev/null 2>&1; exit 0; }; cat >/dev/null'")
         if command == expected:
             return callback_approved(Path(script.replace("$HOME", str(Path.home()))), grant)
-    return (len(tokens) in (2, 3) and callback_approved(Path(tokens[1]), grant) and
+    return (len(tokens) in (2, 3, 4) and callback_approved(Path(tokens[1]), grant) and
             Path(tokens[1]).name in {"codex-cmux-title-sync.py", "harness-launch-record"} and
-            (len(tokens) == 2 or tokens[2] == "codex"))
+            (len(tokens) == 2 or tokens[2] == "codex") and
+            (len(tokens) < 4 or (tokens[3] == "--callback" and Path(tokens[1]).name == "harness-launch-record")))
 
 
 def callback_approved(path, grant):

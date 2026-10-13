@@ -1327,6 +1327,51 @@ out.mkdir(parents=True, exist_ok=True)
         self.prepare()
         self.assertEqual(self.read_hooks(), baseline)
 
+    def enable_ssot(self):
+        (self.repo / 'config' / 'ssot-session-hooks.json').write_text('{"enabled":true}')
+
+    def test_ssot_alone_adds_callback_only_session_and_subagent_start(self):
+        self.set_launcher_env('HARNESS_PREFIX="x"')
+        self.prepare()
+        baseline = self.read_hooks()
+        self.enable_ssot()
+        self.prepare()
+        hooks = self.read_hooks()
+        for event in ('SessionStart', 'SubagentStart'):
+            self.assertEqual(hooks[event][:-1], baseline.get(event, []))
+            row = hooks[event][-1]['hooks'][0]
+            self.assertEqual(row['timeout'], 5, event)
+            self.assertIn('harness-session-hook', row['command'])
+            self.assertIn('--runtime codex', row['command'])
+            self.assertNotIn('harness-launch-record', row['command'])
+            self.assertNotIn('matcher', hooks[event][-1])
+        for event in ('UserPromptSubmit', 'Stop'):
+            self.assertEqual(hooks[event][-1]['hooks'][0]['timeout'], 5)
+
+    def test_ssot_with_launch_record_runs_record_then_callback_as_one_session_start_command(self):
+        self.set_launcher_env('HARNESS_PREFIX="x"', "HARNESS_LAUNCH_RECORD_HOOKS=1")
+        self.prepare()
+        baseline = self.read_hooks()
+        self.enable_ssot()
+        self.prepare()
+        hooks = self.read_hooks()
+        entry = self.launch_record_entry()
+        entry['hooks'][0]['command'] += ' --callback'
+        entry['hooks'][0]['timeout'] = 10
+        self.assertEqual(hooks['SessionStart'][-1], entry)
+        self.assertEqual(hooks['SessionStart'][:-1], baseline['SessionStart'][:-1])
+        text = json.dumps(hooks['SessionStart'])
+        self.assertEqual(text.count('harness-launch-record'), 1)
+        self.assertEqual(text.count('harness-session-hook'), 0, 'no separate SessionStart callback row')
+        sub = hooks['SubagentStart']
+        self.assertEqual(len(sub), 1)
+        self.assertEqual(sub[0]['hooks'][0]['timeout'], 5)
+        self.assertIn('--runtime codex', sub[0]['hooks'][0]['command'])
+        # Without ssot the record row is unchanged (no re-approval for other profiles).
+        (self.repo / 'config' / 'ssot-session-hooks.json').unlink()
+        self.prepare()
+        self.assertEqual(self.read_hooks(), baseline)
+
     def test_orca_and_herdr_rows_are_ordered_after_harness_entries(self):
         # Case 4: six Orca entries first, then the herdr entry.
         events = ["SessionStart", "UserPromptSubmit", "PreToolUse",

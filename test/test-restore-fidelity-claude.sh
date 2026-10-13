@@ -97,7 +97,7 @@ run_hook() { # <command> <session-id> <source> [ENV=val ...]   (TABLE selects th
     | env HARNESS_SESSION_STATE_HOME="$STATE" "$@" /bin/sh -c "$cmd --pstable ${TABLE:-$TMP/ps-clean} --start-pid 1000" > "$TMP/hook.out"
   [[ ! -s "$TMP/hook.out" ]] || fail 'hook printed output (would become session context)'
 }
-record_of() { HARNESS_SESSION_STATE_HOME="$STATE" "$PY" "$LAUNCHER_DIR/bin/harness-launch-record" read claude "$1"; }
+record_of() { HARNESS_SESSION_STATE_HOME="$STATE" "$PY" "$LAUNCHER_DIR/bin/harness-launch-record" read claude "$1" | grep -Ev "^(source|agent_pid|agent_start|task_id|parent_native)="; }
 
 # R1: herdr types `claude --resume <id>`; shell routing hands the launcher
 # `base --passthrough --resume <id>` marked as a host default.
