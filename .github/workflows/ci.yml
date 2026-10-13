@@ -47,7 +47,7 @@ jobs:
           /bin/zsh -n bin/aliases.zsh
 
       - name: Lint public documentation
-        run: npx --yes markdownlint-cli2@0.23.0 README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md 'docs/*.md' '.github/*.md'
+        run: npx --yes markdownlint-cli2@latest README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md 'docs/*.md' '.github/*.md'
 
       - name: Run regression suite
         shell: bash

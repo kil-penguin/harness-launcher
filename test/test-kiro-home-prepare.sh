@@ -412,7 +412,7 @@ if bridged.get("type") != "stdio" or bridged.get("command") != "npx":
 if "url" in bridged or "headers" in bridged:
     print(f"FAIL: bridged server kept http-only fields: {sorted(bridged)}"); ok = False
 args = bridged.get("args", [])
-for expected in ("mcp-remote@0.14.2", "https://example.invalid/mcp",
+for expected in ("mcp-remote@latest", "https://example.invalid/mcp",
                  "Authorization: Bearer ${TEST_BRIDGE_TOKEN}", "X-Bare: ${TEST_BRIDGE_TOKEN}",
                  "X-Defaulted: committed-default", "X-Unset: ${TEST_BRIDGE_ABSENT}",
                  "X-Pair: ${TEST_BRIDGE_TOKEN}/second", "X-Plain: literal-value"):
