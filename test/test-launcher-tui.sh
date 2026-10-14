@@ -788,7 +788,7 @@ lr_run_hook() { # <command> <session-id>
     | env HARNESS_SESSION_STATE_HOME="$LR_STATE" /bin/sh -c "$1 --pstable $TEST_TEMP/ps-clean --start-pid 1000" > "$TEST_TEMP/lr-hook.out"
   [[ ! -s "$TEST_TEMP/lr-hook.out" ]] || fail 'launch-record hook printed output'
 }
-lr_record() { HARNESS_SESSION_STATE_HOME="$LR_STATE" "$LR_PY" "$LAUNCHER_DIR/bin/harness-launch-record" read claude "$1"; }
+lr_record() { HARNESS_SESSION_STATE_HOME="$LR_STATE" "$LR_PY" "$LAUNCHER_DIR/bin/harness-launch-record" read claude "$1" | grep -Ev '^(source|agent_pid|agent_start|task_id|parent_native)='; }
 # opus (opus[1m]) + bypassPermissions: final 2=Permission, 4=bypassPermissions, 1=Start
 OUT="$TEST_TEMP/lr1.out"; STUB="$TEST_TEMP/lr1.stub"; reset_plan
 run_tui $'1\n4\n2\n4\n1\n' "$OUT" "$STUB"
