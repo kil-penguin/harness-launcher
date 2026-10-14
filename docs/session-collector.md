@@ -74,6 +74,12 @@ only produces facts; the host callback decides what to capture and send.
   parent is kept for the first record of the agent process only: a later
   `SessionStart` of the same process (`/branch`, `/clear`, compaction) starts
   from the session it came from, not from the launcher's parent.
+  Known ceiling: if the first hook of a forked process has no process identity
+  (a transient failure reading the process table), no parent is recorded for it
+  and a later record of the same process can take the claim, so a transient
+  failure on that first hook only can attach the parent to a later session. No
+  nonce is added for this. A record whose parent is its own session id drops the
+  parent without using the claim.
 - `harness-headless --journal-board <board> --journal-task <t_xxxxxxxx>`
   (together, or neither) runs the callback once with `--runtime buzz` and a
   `RunStart` payload of ids only. Without both arguments nothing is sent; the

@@ -422,6 +422,14 @@ read_full claude $FORK2; [[ "$OUT" != *parent_native=* && "$OUT" == *source=fork
 # the same session id seen again (a retried hook) does not resurrect it
 rec claude "$(event SessionStart fork $FORK2)" -- "${LAUNCH[@]}" --parent-native $PAR
 read_full claude $FORK2; [[ "$OUT" != *parent_native=* ]] || fail "retry resurrected the parent: [$OUT]"
+# a record whose parent is itself drops it WITHOUT consuming the process's claim (as #114's provider-record guard)
+sed 's/Oct  6 09:05:07/Oct  9 03:03:03/' "$LIVE" > "$TMP/ps-live-d"
+PSARGS=(--pstable "$TMP/ps-live-d" --start-pid 1000)
+SELF=bbbbbbbb-cccc-4ddd-8eee-000000000f10; CHILD1=bbbbbbbb-cccc-4ddd-8eee-000000000f11
+rec claude "$(event SessionStart fork $SELF)" -- "${LAUNCH[@]}" --parent-native $SELF
+read_full claude $SELF; [[ "$OUT" != *parent_native=* ]] || fail "self parent kept: [$OUT]"
+rec claude "$(event SessionStart fork $CHILD1)" -- "${LAUNCH[@]}" --parent-native $SELF
+read_full claude $CHILD1; [[ "$OUT" == *"parent_native=$SELF"* ]] || fail "self record consumed the claim: [$OUT]"
 # without a process identity the parent is dropped (none beats wrong)
 PSARGS=(--pstable "$CLEAN" --start-pid 1000)
 rec claude "$(event SessionStart fork bbbbbbbb-cccc-4ddd-8eee-000000000f03)" -- "${LAUNCH[@]}" --parent-native $PAR

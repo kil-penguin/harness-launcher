@@ -290,7 +290,9 @@ can write. They come only from the **launch record**:
   the launcher-owned profile (`fast|base|sol|astra|plan|rich`, not a caller `-p`),
   plus the source root and isolation.
 - A `SessionStart` hook the launcher injects runs `harness-launch-record`, which
-  writes `<state>/launch-records/<agent>-<session_id>` (mode 0600). It opens the
+  writes `<state>/launch-records/<agent>-<session_id>` (mode 0600), plus one empty
+  `.parent-<hash>` marker (mode 0600) per fork launch that keeps the fork parent for
+  the process's first record only; markers are not pruned, like the records. It opens the
   `launch-records` directory with `O_DIRECTORY|O_NOFOLLOW`, writes a private temp
   file and renames it through that descriptor, so a symlink at the path is
   replaced, never followed and a symlinked directory is refused. The reader

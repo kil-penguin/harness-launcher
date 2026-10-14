@@ -932,6 +932,8 @@ sandbox grant from a launch record. The two sources have different trust:
 - The launch record is written by the launcher's own `SessionStart` hook from the
   grant the launcher exported for that launch, under
   `<state>/launch-records/<agent>-<session_id>` with mode 0600.
+  A fork launch also leaves one empty `.parent-<hash>` marker beside the records (the
+  fork parent applies to the process's first record only); neither is pruned.
   The launcher never escalates: without a record it keeps the default grant and
   prints the command that relaunches with bypass. A record is honoured only for its own harness root,
   and it is also the only proof that a Claude session lives outside an isolated

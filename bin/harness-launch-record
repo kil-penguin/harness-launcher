@@ -303,6 +303,8 @@ def write(agent, raw=None):
     if fields is None or "source_root" not in fields or "isolated" not in fields:
         return
     fields["source"] = payload["source"]
+    if fields.get("parent_native", "").lower() == session_id.lower():
+        del fields["parent_native"]  # a session is never its own parent; this does not use the claim
     dir_fd = open_records_dir(create=True)
     if dir_fd is None:
         return
