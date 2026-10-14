@@ -410,10 +410,30 @@ read_full claude $AL
 [[ "$OUT" == *$'\nsource=fork'* && "$OUT" == *$'\nagent_pid=998'* && "$OUT" == *$'\nagent_start=Tue Oct 6 09:05:07 2026'* \
    && "$OUT" == *$'\ntask_id='"$TID"* && "$OUT" == *$'\nparent_native='"$PAR"* ]] || fail "autolink fields: [$OUT]"
 [[ "$OUT" == source_root=* ]] || fail "grant/placement fields must stay first: [$OUT]"
+# a hook argument is fixed for the whole process: only the process's first record keeps the parent
+# (launcher fork P -> C1, then an in-session /branch C1 -> C2 must not link C2 to P)
+FORK1=bbbbbbbb-cccc-4ddd-8eee-000000000f01; FORK2=bbbbbbbb-cccc-4ddd-8eee-000000000f02
+sed 's/Oct  6 09:05:07/Oct  7 11:11:11/' "$LIVE" > "$TMP/ps-live-b"
+PSARGS=(--pstable "$TMP/ps-live-b" --start-pid 1000)
+rec claude "$(event SessionStart fork $FORK1)" -- "${LAUNCH[@]}" --parent-native $PAR
+rec claude "$(event SessionStart fork $FORK2)" -- "${LAUNCH[@]}" --parent-native $PAR
+read_full claude $FORK1; [[ "$OUT" == *"parent_native=$PAR"* ]] || fail "first record of the process lost the parent: [$OUT]"
+read_full claude $FORK2; [[ "$OUT" != *parent_native=* && "$OUT" == *source=fork* ]] || fail "later record of the same process kept the launcher parent: [$OUT]"
+# the same session id seen again (a retried hook) does not resurrect it
+rec claude "$(event SessionStart fork $FORK2)" -- "${LAUNCH[@]}" --parent-native $PAR
+read_full claude $FORK2; [[ "$OUT" != *parent_native=* ]] || fail "retry resurrected the parent: [$OUT]"
+# without a process identity the parent is dropped (none beats wrong)
+PSARGS=(--pstable "$CLEAN" --start-pid 1000)
+rec claude "$(event SessionStart fork bbbbbbbb-cccc-4ddd-8eee-000000000f03)" -- "${LAUNCH[@]}" --parent-native $PAR
+read_full claude bbbbbbbb-cccc-4ddd-8eee-000000000f03; [[ "$OUT" != *parent_native=* ]] || fail "parent kept without a process key: [$OUT]"
+PSARGS=(--pstable "$LIVE" --start-pid 1000)
 # codex: task and parent come from the launcher environment
+sed 's/Oct  6 09:05:07/Oct  8 22:22:22/' "$LIVE" > "$TMP/ps-live-c"
+PSARGS=(--pstable "$TMP/ps-live-c" --start-pid 1000)
 rec codex "$(event SessionStart startup $AL)" HARNESS_LAUNCH_SOURCE_ROOT=/srv/harness HARNESS_LAUNCH_ISOLATED=0 HARNESS_LAUNCH_TASK_ID=$TID HARNESS_LAUNCH_PARENT_NATIVE=$PAR
 read_full codex $AL
 [[ "$OUT" == *"task_id=$TID"* && "$OUT" == *"parent_native=$PAR"* ]] || fail "codex task/parent: [$OUT]"
+PSARGS=(--pstable "$LIVE" --start-pid 1000)
 # invalid task / parent are dropped; a 3-column table (no lstart) records no process
 rec claude "$(event SessionStart startup $AL)" -- "${LAUNCH[@]}" --task-id 'not-a-uuid' --parent-native '../x'
 read_full claude $AL

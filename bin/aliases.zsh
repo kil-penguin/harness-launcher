@@ -592,15 +592,15 @@ _harness_launcher_task_value() {
 # _harness_launcher_fork_resume_id <--resume value>
 #   The native session id a Claude --resume value names: a UUID, or the verified
 #   fork locator harness_claude_fork.py rewrites a UUID to (an absolute transcript
-#   path `.../projects/.../<native-uuid>.jsonl`, whose basename is that id). Anything
-#   else, including relative paths and `..`, names no parent.
+#   path `$HOME/.claude/projects/<project>/<native-uuid>.jsonl`, whose basename is
+#   that id). Anything else (relative, `..`, another root, nested) names no parent.
 _harness_launcher_fork_resume_id() {
   local value="${1-}" uuid_re='[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}'
   if [[ "$value" =~ ^${uuid_re}$ ]]; then
     print -r -- "${(L)value}"
-  elif [[ "$value" =~ ^/.*/projects/.+/${uuid_re}\.jsonl$ && "$value" != *..* && "$value" != *[[:cntrl:]]* ]]; then
-    value="${value:t:r}"
-    [[ "$value" =~ ^${uuid_re}$ ]] && print -r -- "${(L)value}"
+  elif [[ -n "$HOME" && "$value" == "$HOME/.claude/projects/"* && "$value" != *..* && "$value" != *[[:cntrl:]]* ]]; then
+    local rest="${value#"$HOME/.claude/projects/"}"
+    [[ "$rest" =~ ^[^/]+/${uuid_re}\.jsonl$ ]] && print -r -- "${(L)${rest:t:r}}"
   fi
   return 0
 }
@@ -627,15 +627,26 @@ _harness_launcher_fork_parent() {
     done
     return 0
   fi
+  # Options whose next argument is a value, never a control (as harness_claude_fork.py).
+  local -a value_opts=(--model --effort --permission-mode --settings --setting-sources
+    --mcp-config --allowedTools --allowed-tools --disallowedTools --disallowed-tools --tools
+    --system-prompt --append-system-prompt --system-prompt-file --append-system-prompt-file
+    --agent --agents --add-dir --output-format --input-format --json-schema --max-turns
+    --max-budget-usd --fallback-model --session-id --plugin-dir --betas --name --thinking
+    --max-thinking-tokens)
+  local resumes=0
   for (( i = 1; i <= ${#argv}; i++ )); do
     arg="${argv[i]}"
     case "$arg" in
       --) break ;;
       --fork-session) fork=true ;;
-      --resume|-r) id="$(_harness_launcher_fork_resume_id "${argv[i+1]-}")" ;;
-      --resume=*) id="$(_harness_launcher_fork_resume_id "${arg#--resume=}")" ;;
+      --resume|-r) id="$(_harness_launcher_fork_resume_id "${argv[i+1]-}")"; (( resumes++ )); (( i++ )) ;;
+      --resume=*) id="$(_harness_launcher_fork_resume_id "${arg#--resume=}")"; (( resumes++ )) ;;
+      *) (( ${value_opts[(Ie)$arg]} )) && (( i++ )) ;;
     esac
   done
+  # Two --resume controls are ambiguous (as in harness_claude_fork.py): no parent.
+  (( resumes == 1 )) || id=""
   $fork && [[ -n "$id" ]] && print -r -- "$id"
   return 0
 }

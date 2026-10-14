@@ -15,7 +15,7 @@ context). It always exits 0.
 Auto-link facts (P3-L): the record also holds the SessionStart `source`, the
 `agent_pid` and `agent_start` (ps lstart in UTC, whitespace-collapsed) of the agent
 process found by the ancestry walk, and the launcher's `task_id` (--task) and
-`parent_native` (fork). With --callback the same command then runs the optional
+`parent_native` (fork; kept for the first record of the agent process only). With --callback the same command then runs the optional
 host collector callback (`~/.local/share/harness-service/bin/harness-session-hook
 --runtime <agent>`) with the same payload, strictly after the record is durable:
 record and callback are one sequential command, no cross-hook ordering is
@@ -39,6 +39,7 @@ ran this hook, any further ancestor whose executable basename is exactly
 that cannot be read counts as nested (it can only withhold a grant).
 `--pstable FILE --start-pid N` replace the live process table in tests.
 """
+import hashlib
 import json
 import os
 import re
@@ -269,6 +270,25 @@ def launch_settings(agent):
     return fields, pstable, start_pid
 
 
+def claim_parent(dir_fd, fields):
+    """True only for the first record of this agent process.
+
+    --parent-native is a fixed hook argument, so every later SessionStart of the
+    same process (/branch, /clear, compaction, resume) would repeat it under its
+    new session id. The parent is meaningful for the process's first session
+    only: an O_EXCL marker keyed by pid and start time grants it once. Without a
+    process identity there is no key, and no parent beats a wrong one.
+    """
+    if "agent_pid" not in fields:
+        return False
+    key = hashlib.sha256(("%s:%s" % (fields["agent_pid"], fields["agent_start"])).encode()).hexdigest()[:32]
+    try:
+        os.close(os.open(".parent-" + key, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd))
+    except OSError:
+        return False
+    return True
+
+
 def write(agent, raw=None):
     payload = json.loads(sys.stdin.read() if raw is None else raw)
     if not isinstance(payload, dict) or payload.get("hook_event_name") != "SessionStart":
@@ -292,6 +312,8 @@ def write(agent, raw=None):
             pid, start = agent_process(table, start_pid)
             if pid is not None:
                 fields["agent_pid"], fields["agent_start"] = str(pid), start
+        if "parent_native" in fields and not claim_parent(dir_fd, fields):
+            del fields["parent_native"]
         # An unreadable process table counts as nested: it can only withhold a grant.
         if table is None or ancestry_nested(table, start_pid):
             fields = merge_nested(read_fields(dir_fd, name), fields)

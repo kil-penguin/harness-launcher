@@ -71,13 +71,21 @@ run "$TEST_TEMP/c3" "" base --task
 run "$TEST_TEMP/c4" "" base --passthrough --resume $P --fork-session
 case "$(settings_hook "$TEST_TEMP/c4")" in *" --parent-native $P"*) ;; *) fail 'fork parent not recorded' "$TEST_TEMP/c4" ;; esac
 # #114 rewrites a verified fork to `--resume <transcript>/<native-uuid>.jsonl`; the parent is that exact native id
-TP=/home/u/.claude/projects/-proj/$P.jsonl
+TP=$HOME/.claude/projects/-proj/$P.jsonl
 run "$TEST_TEMP/c7" "" base --passthrough --permission-mode default --resume $TP --fork-session
 case "$(settings_hook "$TEST_TEMP/c7")" in *" --parent-native $P"*) ;; *) fail 'rewritten fork parent not recorded' "$TEST_TEMP/c7" ;; esac
-for bad in "projects/-proj/$P.jsonl" "/home/u/.claude/projects/../$P.jsonl" "/home/u/.claude/projects/-proj/not-a-uuid.jsonl" "/home/u/.claude/other/$P.jsonl" "/home/u/.claude/projects/-proj/$P.txt"; do
+for bad in "projects/-proj/$P.jsonl" "$HOME/.claude/projects/../$P.jsonl" "$HOME/.claude/projects/-proj/not-a-uuid.jsonl" "$HOME/.claude/other/$P.jsonl" "$HOME/.claude/projects/-proj/$P.txt" "/tmp/evil/projects/-proj/$P.jsonl" "/tmp/evil/.claude/projects/-proj/$P.jsonl" "$HOME/.claude/projects/-proj/sub/$P.jsonl" "$HOME/.claude/projects/$P.jsonl"; do
   run "$TEST_TEMP/c8" "" base --passthrough --resume "$bad" --fork-session
   case "$(settings_hook "$TEST_TEMP/c8")" in *--parent-native*) fail "unverifiable transcript path gave a parent: $bad" "$TEST_TEMP/c8" ;; esac
 done
+# an option value is not a control: `--name -r <path>` names the session, it resumes nothing
+run "$TEST_TEMP/c10" "" base --passthrough --name -r $TP --fork-session
+case "$(settings_hook "$TEST_TEMP/c10")" in *--parent-native*) fail 'option value taken for --resume' "$TEST_TEMP/c10" ;; esac
+run "$TEST_TEMP/c11" "" base --passthrough --model -r $P --fork-session --resume $TP
+case "$(settings_hook "$TEST_TEMP/c11")" in *" --parent-native $P"*) ;; *) fail 'real --resume after an option value lost' "$TEST_TEMP/c11" ;; esac
+Q=eeeeeeee-ffff-4aaa-8bbb-000000000d04
+run "$TEST_TEMP/c12" "" base --passthrough --resume $Q --fork-session --resume $P
+case "$(settings_hook "$TEST_TEMP/c12")" in *--parent-native*) fail 'two --resume values are ambiguous: no parent' "$TEST_TEMP/c12" ;; esac
 run "$TEST_TEMP/c9" "" base --passthrough --resume $TP
 case "$(settings_hook "$TEST_TEMP/c9")" in *--parent-native*) fail 'a transcript resume without --fork-session is not a fork' "$TEST_TEMP/c9" ;; esac
 run "$TEST_TEMP/c5" "" base --passthrough --resume $P

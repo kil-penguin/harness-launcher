@@ -69,8 +69,11 @@ only produces facts; the host callback decides what to capture and send.
   `HARNESS_LAUNCH_TASK_ID`; neither is read from settings `env`. A fork of an
   explicit parent (`--fork-session` with `--resume <uuid>` for Claude, `fork
   <uuid>` after `--passthrough` for Codex) records `parent_native`. The `--resume` value may also be the verified transcript path that
-  `harness_claude_fork.py` rewrites a fork to (`.../projects/.../<native-uuid>.jsonl`);
-  its basename is the parent id. Any other path form records no parent.
+  `harness_claude_fork.py` rewrites a fork to (`$HOME/.claude/projects/<project>/<native-uuid>.jsonl`);
+  its basename is the parent id. Any other path form records no parent. The
+  parent is kept for the first record of the agent process only: a later
+  `SessionStart` of the same process (`/branch`, `/clear`, compaction) starts
+  from the session it came from, not from the launcher's parent.
 - `harness-headless --journal-board <board> --journal-task <t_xxxxxxxx>`
   (together, or neither) runs the callback once with `--runtime buzz` and a
   `RunStart` payload of ids only. Without both arguments nothing is sent; the
