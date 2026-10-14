@@ -223,6 +223,16 @@ repair_auth_link_no_clobber() {
   return 1
 }
 
+# Broker-bound isolated homes inherit only the canonical home's installed and
+# enabled plugins that both manifests list in runtime_audit.native_codex_plugins.
+# Runs after publication on warm and cold paths; it never fails preparation, so
+# a missing installation is still reported by the harness audit.
+inherit_native_codex_plugins() {
+  [[ -n "${HARNESS_SESSION_ID:-}" && -f "$SURFACE_MANIFEST" ]] || return 0
+  grep -q '"native_codex_plugins"' "$SURFACE_MANIFEST" 2>/dev/null || return 0
+  python3 "$SCRIPT_DIR/codex-plugin-inherit.py" ensure "$FINAL_CODEX_HOME" || true
+}
+
 if [[ -f "$SURFACE_MANIFEST" ]]; then
   [[ -x "$SURFACE_RESOLVER" && -x "$SURFACE_WARM_PROBE" ]] || {
     echo "ERROR: Codex surface manifest requires executable resolver and warm probe" >&2
@@ -244,6 +254,7 @@ if [[ -f "$SURFACE_MANIFEST" ]]; then
     [[ -f "$CODEX_HOME/config.toml" ]] && grep -q '^\[otel\]$' "$CODEX_HOME/config.toml" && existing_observability=1
     if [[ "$existing_observability" -eq "$HARNESS_OBSERVABILITY_ACTIVE" ]]; then
       repair_auth_link_no_clobber
+      inherit_native_codex_plugins
       exit 0
     fi
   else
@@ -2634,3 +2645,5 @@ PY
   fi
   repair_auth_link_no_clobber
 fi
+
+inherit_native_codex_plugins

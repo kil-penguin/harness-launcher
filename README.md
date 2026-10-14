@@ -161,6 +161,10 @@ canonical harness so existing product worktrees remain available. Claude
 plugins installed with `--scope project` or `--scope local` for the canonical
 harness also load in the session: the launcher mirrors their install records
 for the session root (see [Claude plugins in isolated sessions](docs/architecture.md#claude-plugins-in-isolated-sessions)).
+Native Codex plugins that both the canonical and session `config/codex-surface.json`
+list in `runtime_audit.native_codex_plugins` are carried from the canonical
+`.harness/codex` when installed and enabled there, without hook trust or auth
+(see [Native plugins in isolated sessions](docs/codex-integration.md#native-plugins-in-isolated-sessions)).
 
 A profile can set `HARNESS_SESSION_ISOLATION_DEFAULT=1` to route fresh,
 interactive direct-Claude and native-Codex launches into isolation by default.
