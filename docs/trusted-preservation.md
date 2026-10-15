@@ -4,8 +4,8 @@
 native, one-shot confirmation before a bounded Git preservation action. It has
 no command-line approval option. Invalid input is rejected without a dialog.
 
-This source candidate is not yet released or installed. When released, the
-command is installed only through the supported Homebrew release flow.
+The command is installed only through the supported Homebrew release flow.
+A source checkout alone is not proof of a released or installed command.
 It is not an authorization to preserve a repository: backups, independent
 review, writer coordination, and human confirmation remain required.
 
