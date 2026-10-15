@@ -2,6 +2,10 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.55.0 — 2026-10-15
+
+- Isolated Codex homes inherit natively installed plugins that both the canonical and the session `config/codex-surface.json` list in `runtime_audit.native_codex_plugins`, so a harness audit that requires such a plugin no longer always fails inside an isolated session. Only a plugin the canonical `.harness/codex` has installed and enabled is carried: its single cached version, an exact local `[marketplaces.*]` table and `[plugins."<id>"] enabled = true`. Hook trust, auth, tokens, other runtime state and unlisted plugins are never copied, so plugin hooks stay under native `/hooks` review. Session decisions always win and nothing is replaced or deleted; a native uninstall is not reversed. A missing canonical installation leaves the home unchanged and the audit still fails. Behavior is identical under `HARNESS_CODEX_GLOBAL_PLUGIN_POLICY=manage|preserve`, and `~/.codex` is neither read nor written.
+
 ## 0.54.1 — 2026-10-14
 
 - The Kiro authenticated-HTTP bridge runs `mcp-remote@latest` instead of the 0.14.2 pin, so it follows registry releases like the harness package-runner MCPs. `${VAR}` header substitution from the inherited environment was re-verified on 0.14.2 and 0.14.3; the credential still reaches neither argv nor a generated file.

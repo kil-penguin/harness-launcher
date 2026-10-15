@@ -378,6 +378,56 @@ an equivalent path; it does not enable `--dangerously-bypass-hook-trust` or appr
 new hooks. Legacy homes without a surface manifest retain their existing review
 behavior. The command fingerprint subset is verified against Codex 0.161.
 
+## Native plugins in isolated sessions
+
+A fresh isolated home has no natively installed plugins, so a harness audit that
+requires one would always fail there. When both the canonical and the session
+`config/codex-surface.json` list a plugin in
+`runtime_audit.native_codex_plugins`, preparation copies that plugin from the
+canonical `<source>/.harness/codex` only if it is installed and enabled there.
+It runs after publication on warm and cold launches and only for a launcher
+session record that binds the source, physical session root and inode (the same
+binding as hook trust). Other harnesses and launches start no extra process.
+
+What is carried:
+
+- the single cached version under `plugins/cache/<marketplace>/<plugin>/`, read
+  through no-follow directory descriptors (no links, owner-only writable,
+  bounded size) and checked against its manifest name and version;
+- `[marketplaces.<marketplace>]`, only as an exact local definition, and
+  `[plugins."<id>"] enabled = true`.
+
+What is never carried: plugins outside both lists, `openai-bundled` (launcher
+managed), hook trust (`[hooks.state.*]`), `auth.json`, tokens, and other runtime
+state such as `.glider`. Plugin hooks therefore stay under native `/hooks` review
+in each new home until the user trusts them there.
+
+Session state always wins: no plugin cache, table or staging directory is
+replaced or deleted, and only `config.toml` and the record are atomically
+swapped after a compare-and-swap check. A plugin table
+already in the session (enabled or disabled), a differing marketplace table, a
+differing cache directory, or a concurrent native install leaves the session as
+it is. The cache moves into place with an exclusive rename; the config tables are
+appended last with a compare-and-swap that keeps concurrent writes. Inherited ids
+are recorded in `plugins/.harness-inherited.json`, so a native uninstall in the
+session is not reversed; disabling is the persistent opt-out. A record that is
+unsafe or malformed only suppresses inheritance. Platforms without an exclusive
+rename primitive inherit nothing.
+
+Missing canonical installation, a closed session or any unsafe evidence leaves
+the home unchanged and prints a `harness-launcher:` notice: one per plugin for
+plugin evidence or installation, one overall for session binding, policy,
+config or record failures. The harness audit still reports the plugin as
+missing. A later launch retries, so a
+plugin installed in the canonical home after the session started is picked up on
+the next resume. An attempt that fails after staging leaves its
+`plugins/.harness-inherit-*` directory in place rather than deleting anything.
+If an interrupted attempt left a cache that no longer matches the canonical
+version, the notice names that directory; remove it or start a new session.
+
+This is independent of `HARNESS_CODEX_GLOBAL_PLUGIN_POLICY`: it neither reads nor
+writes `~/.codex`, and behaves the same under `manage` and `preserve`.
+
 ## Auth behavior
 
 `CODEX_HOME/auth.json` links to the active native Codex auth file. This keeps login selection global while sessions, MCP config, rules, skills, and history remain project-scoped.

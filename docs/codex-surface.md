@@ -23,6 +23,11 @@ Install native Codex plugins through the native CLI in the target `CODEX_HOME`.
 Their config and cache remain runtime-owned; do not also select their Claude
 plugin skills into the generated home. The exact launcher skill catalog covers
 launcher-selected routes; native plugin inventory is verified separately.
+An optional `runtime_audit.native_codex_plugins` list of `<plugin>@<marketplace>`
+ids names plugins the harness requires natively. The launcher does not validate
+the rest of `runtime_audit`; it reads this list only to carry those plugins from
+the canonical home into isolated session homes, as described in
+[Native plugins in isolated sessions](codex-integration.md#native-plugins-in-isolated-sessions).
 
 ```json
 {
