@@ -402,7 +402,9 @@ managed), hook trust (`[hooks.state.*]`), `auth.json`, tokens, and other runtime
 state such as `.glider`. Plugin hooks therefore stay under native `/hooks` review
 in each new home until the user trusts them there.
 
-Session state always wins and nothing is replaced or deleted. A plugin table
+Session state always wins: no plugin cache, table or staging directory is
+replaced or deleted, and only `config.toml` and the record are atomically
+swapped after a compare-and-swap check. A plugin table
 already in the session (enabled or disabled), a differing marketplace table, a
 differing cache directory, or a concurrent native install leaves the session as
 it is. The cache moves into place with an exclusive rename; the config tables are

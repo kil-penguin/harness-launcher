@@ -33,7 +33,7 @@ UNAVAILABLE = {errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EINVAL}
 TEMP_ALPHABET = string.ascii_letters + string.digits
 EXCLUSIVE = (0x4, 0x1)  # Darwin RENAME_EXCL, Linux RENAME_NOREPLACE
 SWAP = (0x2, 0x2)  # Darwin RENAME_SWAP, Linux RENAME_EXCHANGE
-EXPECTED = (OSError, ValueError, KeyError, TypeError, IndexError, UnicodeError)
+EXPECTED = (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, UnicodeError)
 
 
 class Skip(Exception):
@@ -366,14 +366,16 @@ def _publish_config(home_fd, installed):
                 continue
             if marketplace not in markets and marketplace not in emitted:
                 blocks.append(f"[marketplaces.{marketplace}]\nsource_type = \"local\"\n"
-                              f"source = {json.dumps(market['source'])}\n")
+                              f"source = {json.dumps(market['source'], ensure_ascii=False)}\n")
                 emitted.add(marketplace)
-            blocks.append(f"[plugins.{json.dumps(plugin_id)}]\nenabled = true\n")
+            # The comment sits inside the table: a line above it would join the
+            # previous table, such as the launcher's own project trust entry.
+            blocks.append(f"[plugins.{json.dumps(plugin_id)}]\n# Inherited from the canonical home;"
+                          " hook trust stays with native review.\nenabled = true\n")
             added[plugin_id] = version
         if not added:
             return {}
-        candidate = (text.rstrip("\n") + "\n\n# Inherited allowlisted native Codex plugins;"
-                     " their hook trust stays with native review.\n" + "\n".join(blocks))
+        candidate = text.rstrip("\n") + "\n\n" + "\n".join(blocks)
         tomllib.loads(candidate)
         temporary = ".config.toml." + "".join(secrets.choice(TEMP_ALPHABET) for _ in range(6))
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=home_fd)
@@ -411,7 +413,7 @@ def ensure(published, trust=None):
     except (Skip, *EXPECTED) as error:
         return [f"native Codex plugins not inherited: {error}"]
     try:
-        text, _identity, _mode = _read_live(home_fd)
+        text, _live_identity, _mode = _read_live(home_fd)
         live = tomllib.loads(text)
         missing = [plugin_id for plugin_id in wanted if plugin_id not in (live.get("plugins") or {})]
         if not missing:
@@ -431,6 +433,7 @@ def ensure(published, trust=None):
                 notices.append(f"native Codex plugin {plugin_id} not inherited: {error}")
         if not candidates:
             return notices
+        _flagged_rename()  # Before creating anything: without it nothing is inherited.
         plugins_fd = _open_dir(home_fd, "plugins", create=True)
         try:
             installed = {}

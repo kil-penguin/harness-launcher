@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -192,17 +193,34 @@ class InheritTests(unittest.TestCase):
             (layout.record / "journal").write_text("state=OPEN\nstate=DELIVERED\n")
         def other_source(layout):
             (layout.record / "source-root").write_text(str(layout.target) + "\n")
+        def canonical_plugins_not_table(layout):
+            (layout.source_home / "config.toml").write_text("plugins = \"x\"\n")
+        def manifest_not_object(layout):
+            (layout.source_home / "plugins/cache/glider/glider/0.1.35/.codex-plugin/plugin.json").write_text("[]")
+        def session_marketplaces_not_table(layout):
+            (layout.home / "config.toml").write_text("model = \"session\"\nmarketplaces = 1\n")
         for tweak in (not_installed, disabled, extra_plugin_key, remote_marketplace, extra_marketplace_key,
                       relative_marketplace, missing_marketplace, two_versions, symlink_in_package,
                       symlinked_version, manifest_mismatch, writable_package_file,
                       absent_from_canonical_policy, absent_from_session_policy, invalid_policy,
-                      missing_policy, no_broker_record, closed_journal, other_source):
+                      missing_policy, no_broker_record, closed_journal, other_source,
+                      canonical_plugins_not_table, manifest_not_object, session_marketplaces_not_table):
             with self.subTest(case=tweak.__name__):
                 layout = Layout(self)
                 tweak(layout)
                 before = (layout.home / "config.toml").read_bytes()
-                self.ensure(layout)
-                self.assertNotInherited(layout, before)
+                result = subprocess.run([sys.executable, "-B", str(ROOT / "bin/codex-plugin-inherit.py"),
+                                         "ensure", str(layout.home)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                if tweak in (absent_from_canonical_policy, absent_from_session_policy):
+                    self.assertEqual(result.stderr, "", "an unlisted plugin is not a failure")
+                else:
+                    self.assertIn("harness-launcher: native Codex plugin", result.stderr)
+                if tweak is not session_marketplaces_not_table:
+                    self.assertNotInherited(layout, before)
+                else:
+                    self.assertEqual(before, (layout.home / "config.toml").read_bytes())
 
     def test_launcher_managed_marketplace_is_never_inherited(self):
         layout = Layout(self, allow=("computer-use@openai-bundled",))
@@ -301,7 +319,7 @@ class InheritTests(unittest.TestCase):
             notices = self.ensure(layout)
         self.assertNotInherited(layout)
         self.assertTrue(any("exclusive rename unavailable" in notice for notice in notices), notices)
-        self.assertFalse(any(p.name.startswith(".harness-inherit-") for p in (layout.home / "plugins").iterdir()))
+        self.assertFalse((layout.home / "plugins").exists(), "nothing may be created without the primitive")
 
     def test_native_uninstall_is_not_reversed(self):
         layout = Layout(self)
@@ -505,7 +523,9 @@ class PrepareIntegrationTests(unittest.TestCase):
                 write_package(canonical / "plugins/cache/glider", "glider", "0.1.35")
                 with (canonical / "config.toml").open("a") as stream:
                     stream.write("\n[marketplaces.glider]\nsource_type = \"local\"\nsource = " + json.dumps(str(marketplace))
-                                 + "\n\n[plugins.\"glider@glider\"]\nenabled = true\n")
+                                 + "\n\n[plugins.\"glider@glider\"]\nenabled = true\n"
+                                 + "\n[hooks.state.\"glider@glider:hooks/hooks.json:session_start:0:0\"]\nenabled = true\n"
+                                 + "trusted_hash = \"sha256:" + "a" * 64 + "\"\n")
                 canonical_before = (canonical / "config.toml").read_bytes()
                 fixture.prepare(HARNESS_CODEX_SLACK_APPS="")
                 self.assertEqual(canonical_before, (canonical / "config.toml").read_bytes(), "canonical home must stay untouched")
@@ -539,8 +559,17 @@ class PrepareIntegrationTests(unittest.TestCase):
                 changed["repo"] = "changed"
                 manifest_path.write_text(json.dumps(changed))
                 fixture.prepare(**env)
-                rebuilt = tomllib.loads((home / "config.toml").read_text())
+                rebuilt_text = (home / "config.toml").read_text()
+                rebuilt = tomllib.loads(rebuilt_text)
                 self.assertEqual(rebuilt["plugins"][PLUGIN_ID], {"enabled": True}, "cold rebuild lost inherited plugin")
+                self.assertFalse(any(key.startswith("glider@glider:") for key in rebuilt.get("hooks", {}).get("state", {})))
+                lines = rebuilt_text.splitlines()
+                self.assertEqual(lines.count(f"[projects.{json.dumps(str(target))}]"), 1)
+                trust_line = lines.index(f"[projects.{json.dumps(str(target))}]")
+                self.assertEqual(lines[trust_line + 1:trust_line + 3], ["trust_level = \"trusted\"", ""],
+                                 "inherited tables must not attach lines to the launcher trust entry")
+                comment = next(i for i, line in enumerate(lines) if line.startswith("# Inherited from the canonical home"))
+                self.assertTrue(lines[comment - 1].startswith("[plugins."))
                 self.assertEqual(global_config.read_text(), "# untouched global fixture\n")
 
 
