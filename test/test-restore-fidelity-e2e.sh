@@ -36,8 +36,14 @@ fail() { echo "FAIL: $1" >&2; sed 's/^/  log: /' "$LOG" >&2 2>/dev/null || true;
 
 CLAUDE_ID=0b5d1f3e-0000-4000-8000-000000000001
 CODEX_ID=01a0ef50-1bec-7852-afb3-a6b6559f47b6
+git -C "$HARNESS" init -q -b main
+git -C "$HARNESS" config user.email test@example.invalid
+git -C "$HARNESS" config user.name test
+git -C "$HARNESS" add config/launcher.env && git -C "$HARNESS" commit -qm fixture
 printf '{"type":"assistant","isSidechain":false,"message":{"model":"claude-opus-5-5"},"effort":"xhigh"}\n' > "$CCONF/projects/-tmp-proj/$CLAUDE_ID.jsonl"
-printf '{"type":"turn_context","payload":{"model":"gpt-6.1-sol","effort":"medium"}}\n' \
+# A well-formed rollout: the wrapper form reaches durable-history preparation like `codex resume <id>`.
+{ printf '{"type":"session_meta","payload":{"id":"%s"}}\n' "$CODEX_ID"
+  printf '{"type":"turn_context","payload":{"model":"gpt-6.1-sol","effort":"medium"}}\n'; } \
   > "$HARNESS/.harness/codex/sessions/2026/09/30/rollout-2026-09-30T01-02-03-$CODEX_ID.jsonl"
 
 export HOME="$HOME_DIR" PATH="$NATIVE_BIN:/usr/bin:/bin" HARNESS_TEST_LOG="$LOG" HARNESS_SESSION_STATE_HOME="$STATE"
@@ -58,10 +64,14 @@ echo 'PASS: E1 shell `claude --resume <id>` restores model and effort through ha
 : > "$LOG"
 (cd "$PROJECT" && codex resume $CODEX_ID) </dev/null >/dev/null 2>"$TMP/codex.err" || fail 'herdr codex restore failed'
 line="$(grep '^codex:' "$LOG")"
-[[ "$line" == *"<-p> <base> <-m> <gpt-6.1-sol> <-c> <model_reasoning_effort=\"medium\">"*"<resume> <$CODEX_ID>" ]] \
-  || fail "herdr codex restore lost the model/effort: $line"
+# The wrapper form reaches durable-history preparation like `codex resume <id>`:
+# a canonical-only rollout no longer restores in place. It runs as a fresh
+# isolated session (model/effort come from the history restored into that
+# session's home, which this fixture's stub home-prepare does not populate).
+[[ "$line" == *"<resume>"*"<$CODEX_ID>" ]] || fail "herdr codex restore lost the id: $line"
+find "$STATE/sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -q . || fail 'canonical-only Codex restore did not create a fresh isolated session'
 grep -Fxq 'marker:<unset>' <(sed -n '/^codex:/,/^marker/p' "$LOG") || fail 'host-default marker reached codex'
-echo 'PASS: E2 shell `codex resume <id>` restores model and effort through harness-auto'
+echo 'PASS: E2 shell `codex resume <id>` restores a canonical-only rollout as a fresh isolated session through harness-auto'
 
 # A caller flag keeps the launcher out of it.
 : > "$LOG"
