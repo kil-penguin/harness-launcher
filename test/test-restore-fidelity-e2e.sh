@@ -77,4 +77,42 @@ line="$(grep '^claude:' "$LOG")"
 [[ "$line" == *"<--resume> <$CLAUDE_ID>"* && "$line" == *"<--model> <claude-opus-5-5>"* ]] || fail "prefix restore dropped the id or model: $line"
 echo 'PASS: E4 `<prefix> --resume <id>` launches directly with the restored settings'
 
+# --- isolation-default profile (HARNESS_SESSION_ISOLATION_DEFAULT=1) ------------------
+# The same wrapper chain on a TTY: a canonical-only rollout is no longer resumed in
+# place. The pure wrapper form becomes a fresh isolated session through durable
+# history; the launcher still runs the real routing scripts against the fake agent.
+HARNESS2="$HOME_DIR/beta"; PROJECT2="$HARNESS2/projects/app"
+mkdir -p "$HARNESS2/config" "$PROJECT2" "$HARNESS2/.harness/codex/sessions/2026/09/30"
+cat > "$HARNESS2/config/launcher.env" <<'ENV'
+HARNESS_NAME="beta test"
+HARNESS_PREFIX="beta"
+HARNESS_SESSION_ISOLATION_DEFAULT="1"
+ENV
+git -C "$HARNESS2" init -q -b main
+git -C "$HARNESS2" config user.email test@example.invalid
+git -C "$HARNESS2" config user.name test
+git -C "$HARNESS2" add config/launcher.env && git -C "$HARNESS2" commit -qm fixture
+{ printf '{"type":"session_meta","payload":{"id":"%s"}}\n' "$CODEX_ID"
+  printf '{"type":"turn_context","payload":{"model":"gpt-6.1-sol","effort":"medium"}}\n'; } \
+  > "$HARNESS2/.harness/codex/sessions/2026/09/30/rollout-2026-09-30T01-02-03-$CODEX_ID.jsonl"
+HOME="$HOME_DIR" HARNESS_PROFILE_BIN_DIR="$PROFILE_BIN" "$PREFIX/bin/harness-profile" register "$HARNESS2" >/dev/null
+cat > "$TMP/tty-run.zsh" <<'TTY'
+source "$PREFIX/share/harness-launcher/aliases.zsh"
+harness_register "$HARNESS2"
+harness_shell_enable
+cd "$PROJECT2" && codex resume "$CODEX_ID"
+TTY
+: > "$LOG"
+before_sessions="$(find "$STATE/sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+export PREFIX HARNESS2 PROJECT2 CODEX_ID
+expect -c 'set timeout 60; log_user 0; spawn zsh '"$TMP"'/tty-run.zsh; expect eof; catch wait r; exit [lindex $r 3]' \
+  || fail 'isolation-default wrapper restore failed on a TTY'
+line="$(grep '^codex:' "$LOG")"
+[[ "$line" == *"<resume>"*"<$CODEX_ID>" ]] || fail "isolation-default wrapper restore lost the id: $line"
+# Model and effort come from the selected durable-history snapshot, not the empty clone home.
+[[ "$line" == *"<-m> <gpt-6.1-sol>"* && "$line" == *"<model_reasoning_effort=\"medium\">"* ]] || fail "isolation-default history restore lost the model/effort: $line"
+after_sessions="$(find "$STATE/sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+(( after_sessions == before_sessions + 1 )) || fail 'isolation-default canonical-only Codex restore did not create a fresh isolated session'
+echo 'PASS: E5 isolation-default wrapper restore of a canonical-only rollout starts a fresh isolated session'
+
 echo 'PASS: restore fidelity end to end'

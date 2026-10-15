@@ -15,6 +15,7 @@ from typing import Any
 ALLOWED_HOOKS = {
     "pre-bash-harness-main-only-guard.sh",
     "pre-bash-pr-gate.sh",
+    "pre-tool-peer-checkout-guard.sh",
 }
 IDENTIFIER = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
@@ -460,6 +461,10 @@ def main() -> int:
     for child_payload, workdir in calls:
         environment = dict(os.environ)
         environment["HARNESS_HOOK_RUNTIME"] = "codex"
+        # The hook's session owner is the Codex process that spawned this
+        # adapter (parity with codex-hook-adapter.sh), never the adapter or a
+        # value inherited from an unrelated environment.
+        environment["HARNESS_HOOK_OWNER_PID"] = str(os.getppid())
         result = subprocess.run(
             ["bash", str(hook)],
             input=json.dumps(child_payload, ensure_ascii=False),
