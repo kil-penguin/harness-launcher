@@ -348,8 +348,9 @@ can write. They come only from the **launch record**:
 
 Canonical owner. `harness-launcher` maps a restore id to the isolated session that
 owns it (above). When no isolated session owns the id, `_harness_launcher_resolve_restore`
-returns 4 in two cases, and an isolation-default profile then takes the legacy
-(non-isolated) route instead of rejecting:
+returns 4 in two cases. An isolation-default profile no longer continues such a
+session in the canonical checkout (the legacy route); it either starts a fresh
+isolated session or refuses:
 
 - Codex: the rollout `<harness>/.harness/codex/sessions/*/*/*/rollout-*-<id>.jsonl`
   exists (regular, not a symlink) in the source harness `CODEX_HOME`.
@@ -357,10 +358,18 @@ returns 4 in two cases, and an isolation-default profile then takes the legacy
   Isolated sessions file their transcripts in the same project directory, so a
   transcript alone is never proof.
 
-An isolated owner always wins. `HARNESS_SESSION_ISOLATION=1` (forced) and every
-other case keep the reject message. A Claude session started before launch
-records exists still rejects in an isolation-default profile; relaunch it once
-with `--no-isolated` to start recording.
+An isolated owner always wins, for every spelling. On return 4, only the pure Codex
+forms `codex resume <id>` and `codex --passthrough resume <id>` become a fresh isolated
+session through durable history (the exact form takes that route before the owner check).
+Claude, every other Codex form (preset, `-m`, `-s`, `-a`, `-c`, planner argv: the rewrite
+would drop the flags and re-apply the recorded grant) and a failed history preparation are
+refused with two alternatives: start a fresh isolated session, or
+`<prefix> --no-isolated <args>` for maintenance. Without a TTY, a Claude continuation is
+owner-checked too; fresh, print and client runs keep the legacy route. Profiles without
+`HARNESS_SESSION_ISOLATION_DEFAULT=1` keep the previous in-place restore.
+`HARNESS_SESSION_ISOLATION=1` (forced) and every other case keep the reject message. A
+Claude session started before launch records exists still rejects in an
+isolation-default profile; relaunch it once with `--no-isolated` to start recording.
 
 ## Host prerequisites
 

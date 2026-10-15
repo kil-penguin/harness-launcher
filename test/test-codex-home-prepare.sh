@@ -762,7 +762,8 @@ for h in session-start user-prompt-session-end-detect prompt-keyword-routing \
          pre-tool-budget-guard pre-tool-opus-guard pre-edit-config-protection \
          pre-edit-codex-output-guard pre-write-memory-block pre-tool-scoped-context \
          post-edit-codex-resync suggest-compact post-bash-audit post-bash-commit-detect \
-         post-tool-auto-pilot-reinject session-end cmux-title-persist codex-subagent-status; do
+         post-tool-auto-pilot-reinject session-end cmux-title-persist codex-subagent-status \
+         pre-tool-peer-checkout-guard; do
   : > "$TEST_HARNESS3/core/hooks/$h.sh"
 done
 cat > "$TEST_HARNESS3/.claude/source/hooks.yaml" <<'EOF'
@@ -841,6 +842,15 @@ cat > "$TEST_HARNESS3/.claude/settings.json" <<'EOF'
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/core/hooks/pre-tool-scoped-context.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/core/hooks/pre-tool-peer-checkout-guard.sh\""
           }
         ]
       },
@@ -1373,6 +1383,7 @@ for event in adapted:
             if event not in cmd:
                 print(f"FAIL: {event} adapter call missing event arg: {cmd}")
                 sys.exit(1)
+peer_adapter_entries = peer_direct_entries = 0
 for entry in data["hooks"].get("PreToolUse", []):
     scripts = {
         name
@@ -1392,9 +1403,25 @@ for entry in data["hooks"].get("PreToolUse", []):
         if matched and "codex-pretool-adapter.py" not in cmd:
             print(f"FAIL: strict PreToolUse hook not normalized: {cmd}")
             sys.exit(1)
-        if not matched and "codex-pretool-adapter.py" in cmd:
+        # The peer-checkout guard keeps its direct Bash/Edit/Write/apply_patch entry and
+        # additionally runs through the adapter for code mode only.
+        peer = "pre-tool-peer-checkout-guard.sh" in cmd
+        if peer and "codex-pretool-adapter.py" in cmd:
+            peer_adapter_entries += 1
+            if entry.get("matcher") != "^(code_mode_exec|exec)$" or len(entry.get("hooks", [])) != 1:
+                print(f"FAIL: peer guard adapter entry must be code-mode only and split: {entry}")
+                sys.exit(1)
+        elif peer:
+            peer_direct_entries += 1
+            if entry.get("matcher") != "Bash|Edit|Write|apply_patch":
+                print(f"FAIL: peer guard direct entry lost its matcher: {entry}")
+                sys.exit(1)
+        elif not matched and "codex-pretool-adapter.py" in cmd:
             print(f"FAIL: rewriting/unapproved PreToolUse hook uses strict adapter: {cmd}")
             sys.exit(1)
+if (peer_adapter_entries, peer_direct_entries) != (1, 1):
+    print(f"FAIL: peer guard must have one direct and one code-mode adapter entry: {(peer_adapter_entries, peer_direct_entries)}")
+    sys.exit(1)
 for entry in data["hooks"].get("Stop", []):
     for h in entry.get("hooks", []):
         cmd = h.get("command", "")
