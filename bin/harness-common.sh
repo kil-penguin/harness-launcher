@@ -304,12 +304,37 @@ harness_codex_subcommand_rejects_profile() {
   return 1
 }
 
+# harness_session_isolation_noninteractive_route [launcher argv...]
+# A call without a TTY keeps the legacy route except for the continuation of an
+# existing Claude session (--resume/-r, --continue/-c, --fork-session, --bg with
+# --resume): that must meet the owner check like an interactive one, otherwise a
+# headless resume silently writes in the canonical checkout. Print runs, Codex,
+# management and client commands, and fresh runs stay legacy.
+harness_session_isolation_noninteractive_route() {
+  local arg route
+  case "${1:-}" in
+    ''|--isolated|--no-isolated|--isolated-session|codex|codex-smoke|checkup|kiro|kiro-cli|codex-gateway)
+      printf '%s\n' legacy; return 0 ;;
+  esac
+  for arg in "$@"; do
+    case "$arg" in
+      --) break ;;
+      -p|-p?*|--print|--print=*) printf '%s\n' legacy; return 0 ;;
+    esac
+  done
+  route="$(harness_session_isolation_default_route 1 "$@")"
+  if [ "$route" = reject ]; then printf '%s\n' reject; else printf '%s\n' legacy; fi
+}
+
 # harness_session_isolation_default_route <interactive:0|1> [launcher argv...]
 # Prints isolate, legacy, reject, or invalid without mutating session state.
 harness_session_isolation_default_route() {
   local interactive="${1:-0}" arg passthrough=0
   shift || return 2
-  [ "$interactive" = 1 ] || { printf '%s\n' legacy; return 0; }
+  if [ "$interactive" != 1 ]; then
+    harness_session_isolation_noninteractive_route "$@"
+    return 0
+  fi
   [ "$#" -gt 0 ] || { printf '%s\n' legacy; return 0; }
 
   case "$1" in
@@ -371,7 +396,18 @@ harness_session_isolation_default_route() {
         printf '%s\n' reject; return 0 ;;
       -c|--continue|-r|-r?*|--resume|--resume=*|--fork-session|--fork-session=*)
         printf '%s\n' reject; return 0 ;;
-      -h|--help|-V|--version|-p|-p?*|--print|--print=*|--background|--bg|--cloud|--cloud=*|--remote-control|--remote-control=*|--teleport|--teleport=*|attach|respawn|--bare|--safe-mode|--restricted|--from-pr|--from-pr=*|--session-id|--session-id=*|-w|-w?*|--worktree|--worktree=*|--tmux|--tmux=*|--environment|--environment=*)
+      --background|--bg)
+        # Alone it starts a fresh background session; with a continuation flag
+        # it continues an existing one.
+        for arg in "$@"; do
+          case "$arg" in
+            --) break ;;
+            -c|--continue|-r|-r?*|--resume|--resume=*|--fork-session|--fork-session=*)
+              printf '%s\n' reject; return 0 ;;
+          esac
+        done
+        printf '%s\n' legacy; return 0 ;;
+      -h|--help|-V|--version|-p|-p?*|--print|--print=*|--cloud|--cloud=*|--remote-control|--remote-control=*|--teleport|--teleport=*|attach|respawn|--bare|--safe-mode|--restricted|--from-pr|--from-pr=*|--session-id|--session-id=*|-w|-w?*|--worktree|--worktree=*|--tmux|--tmux=*|--environment|--environment=*)
         printf '%s\n' legacy; return 0 ;;
       fast|base|plan|opus|rich|fable|ultracode|low|medium|high|xhigh|max|light|bypass|acceptEdits|dontAsk)
         [ "$passthrough" = 0 ] || break ;;

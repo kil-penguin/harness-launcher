@@ -82,4 +82,40 @@ assert_route reject 1 codex continue
 assert_route isolate 1 codex --passthrough -C/tmp -pbase 'fresh task'
 assert_route invalid 1 codex --passthrough --passthrough
 
+# Non-TTY calls: continuation of an existing session goes through the owner
+# check (reject) instead of silently taking the legacy route; fresh, client and
+# print runs keep the legacy route.
+U=0b5d1f3e-0000-4000-8000-000000000001
+assert_route reject 0 --resume "$U"
+assert_route reject 0 base --resume="$U"
+assert_route reject 0 -r "$U"
+assert_route reject 0 --continue
+assert_route reject 0 -c
+assert_route reject 0 --fork-session --resume "$U"
+assert_route reject 0 --bg --resume "$U"
+assert_route reject 0 base --passthrough --resume "$U"
+assert_route legacy 0 base
+assert_route legacy 0 --remote-control
+assert_route legacy 0 --session-id "$U"
+assert_route legacy 0 -w feature
+assert_route legacy 0 --tmux
+assert_route legacy 0 --from-pr 12
+assert_route legacy 0 --bg
+assert_route legacy 0 attach "$U"
+assert_route legacy 0 respawn "$U"
+assert_route legacy 0 --teleport abc
+assert_route legacy 0 -p 'task'
+assert_route legacy 0 -p --resume "$U"
+assert_route legacy 0 --resume "$U" --print
+assert_route legacy 0 --help
+assert_route legacy 0 codex resume --last
+assert_route legacy 0 codex exec resume
+# Interactive: --bg together with a continuation flag is a continuation.
+assert_route reject 1 --bg --resume "$U"
+assert_route reject 1 --background -c
+assert_route legacy 1 --bg
+assert_route legacy 1 --remote-control
+assert_route legacy 1 attach "$U"
+assert_route legacy 1 --teleport abc
+
 echo 'PASS: default-isolation route matrix is explicit and bounded'

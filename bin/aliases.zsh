@@ -302,11 +302,24 @@ for key in ("native_id", "home", "source_root", "isolation_id", "origin_runtime"
 
 # _harness_launcher_codex_history_request [launcher argv...]
 # Recognizes only the public, unambiguous history shortcuts before Codex's
-# normal argument parser can start a native process.
+# normal argument parser can start a native process.  The shell wrapper and
+# Orca spell a resume as `codex --passthrough resume <id>`, and presets as
+# `codex fast resume <id>`; both are normalized to the plain form first.
+# After `--passthrough` a bare `continue` is prompt text, not a shortcut.
 _harness_launcher_codex_history_request() {
   [[ "${1:-}" == codex ]] || return 1
+  local arg passthrough=false lead=0
+  # Only leading wrapper/preset words are dropped, never words after the verb.
+  for arg in "${@:2}"; do
+    case "$arg" in
+      --passthrough) passthrough=true; (( lead++ )) ;;
+      fast|base|sol|plan|rich|astra|work|272k|1m|happy|full-auto|never|bypass) (( lead++ )) ;;
+      *) break ;;
+    esac
+  done
+  set -- codex "${@:$((2 + lead))}"
   case "${2:-}" in
-    continue) [[ $# -eq 2 ]] && print -r -- continue ;;
+    continue) $passthrough && return 0; [[ $# -eq 2 ]] && print -r -- continue ;;
     resume)
       case "${3:-}" in
         --list) [[ $# -eq 3 ]] && print -r -- list ;;
@@ -1121,6 +1134,45 @@ _harness_launcher_announce_run_dir() {
   harness_terminal_announce_cwd "$1"
 }
 
+# _harness_launcher_codex_history_begin <continue|native-uuid>
+# Selects the durable history row, takes its lease and prepares a snapshot for a
+# canonical-only rollout.  It fills history_* variables of the calling
+# _harness_launcher_run (zsh dynamic scope); the caller applies the result.
+_harness_launcher_codex_history_begin() {
+  local history_request="$1"
+  history_selection="$(_harness_launcher_codex_history_select "${HARNESS_DIR:A}" "$history_request")" || {
+    echo 'harness-launcher: durable Codex history selection requires an exact local native UUID' >&2
+    return 2
+  }
+  while IFS='=' read -r history_key history_value; do
+    case "$history_key" in
+      native_id) history_native_id="$history_value" ;;
+      snapshot_id) history_snapshot_id="$history_value" ;;
+      origin_runtime) history_origin_runtime="$history_value" ;;
+    esac
+  done <<< "$history_selection"
+  _harness_launcher_codex_history_lease_acquire "$history_native_id" || {
+    echo 'harness-launcher: selected Codex history is already active' >&2
+    return 2
+  }
+  if [[ -z "$history_snapshot_id" ]]; then
+    _harness_launcher_codex_history_prepare "${HARNESS_DIR:A}" "$history_native_id" >/dev/null || {
+      _harness_launcher_codex_history_lease_release
+      echo 'harness-launcher: selected Codex history cannot be prepared safely' >&2
+      return 2
+    }
+    history_selection="$(_harness_launcher_codex_history_select "${HARNESS_DIR:A}" "$history_native_id")" || return 2
+    history_snapshot_id="" history_origin_runtime=""
+    while IFS='=' read -r history_key history_value; do
+      case "$history_key" in
+        snapshot_id) history_snapshot_id="$history_value" ;;
+        origin_runtime) history_origin_runtime="$history_value" ;;
+      esac
+    done <<< "$history_selection"
+  fi
+  return 0
+}
+
 # _harness_launcher_run <harness-dir> [args...]
 #   Shared implementation for every registered profile function.
 _harness_launcher_run() {
@@ -1242,36 +1294,7 @@ _harness_launcher_run() {
     return $?
   fi
   if [[ -n "$history_request" ]]; then
-    history_selection="$(_harness_launcher_codex_history_select "${HARNESS_DIR:A}" "$history_request")" || {
-      echo 'harness-launcher: durable Codex history selection requires an exact local native UUID' >&2
-      return 2
-    }
-    while IFS='=' read -r history_key history_value; do
-      case "$history_key" in
-        native_id) history_native_id="$history_value" ;;
-        snapshot_id) history_snapshot_id="$history_value" ;;
-        origin_runtime) history_origin_runtime="$history_value" ;;
-      esac
-    done <<< "$history_selection"
-    _harness_launcher_codex_history_lease_acquire "$history_native_id" || {
-      echo 'harness-launcher: selected Codex history is already active' >&2
-      return 2
-    }
-    if [[ -z "$history_snapshot_id" ]]; then
-      _harness_launcher_codex_history_prepare "${HARNESS_DIR:A}" "$history_native_id" >/dev/null || {
-        _harness_launcher_codex_history_lease_release
-        echo 'harness-launcher: selected Codex history cannot be prepared safely' >&2
-        return 2
-      }
-      history_selection="$(_harness_launcher_codex_history_select "${HARNESS_DIR:A}" "$history_native_id")" || return 2
-      history_snapshot_id="" history_origin_runtime=""
-      while IFS='=' read -r history_key history_value; do
-        case "$history_key" in
-          snapshot_id) history_snapshot_id="$history_value" ;;
-          origin_runtime) history_origin_runtime="$history_value" ;;
-        esac
-      done <<< "$history_selection"
-    fi
+    _harness_launcher_codex_history_begin "$history_request" || return $?
     if [[ -n "$history_snapshot_id" ]]; then
       export HARNESS_CODEX_HISTORY_NATIVE_ID="$history_native_id"
       export HARNESS_CODEX_HISTORY_SNAPSHOT_ID="$history_snapshot_id"
@@ -1307,7 +1330,30 @@ _harness_launcher_run() {
           0) isolated=true; requested_session_id="$orca_resume_id"; orca_resume=true ;;
           3) echo "harness-launcher: resume id is ambiguous (several isolated sessions own it); use '${HARNESS_PREFIX} --isolated-session <uuid> $*'" >&2
              return 2 ;;
-          4) isolation_route=legacy ;;
+          4)
+             # The session lives in the canonical checkout.  Never continue it
+             # there silently: Codex becomes a fresh isolated session through
+             # durable history; Claude, or a failed prepare, is refused.
+             local canonical_arg canonical_prev="" canonical_codex_id=""
+             if [[ "${1:-}" == codex ]]; then
+               for canonical_arg in "${@:2}"; do
+                 [[ "$canonical_arg" == -- ]] && break
+                 [[ "$canonical_prev" == resume && "$canonical_arg" =~ $_HARNESS_LAUNCHER_UUID_RE ]] && canonical_codex_id="${(L)canonical_arg}"
+                 canonical_prev="$canonical_arg"
+               done
+             fi
+             if [[ -n "$canonical_codex_id" ]] && _harness_launcher_codex_history_begin "$canonical_codex_id" 2>/dev/null && [[ -n "$history_snapshot_id" ]]; then
+               export HARNESS_CODEX_HISTORY_NATIVE_ID="$history_native_id"
+               export HARNESS_CODEX_HISTORY_SNAPSHOT_ID="$history_snapshot_id"
+               export HARNESS_CODEX_HISTORY_ORIGIN_RUNTIME="$history_origin_runtime"
+               set -- codex resume "$history_native_id"
+               isolated=true
+               history_local_create=true
+             else
+               echo "harness-launcher: this session lives in the shared canonical checkout and would keep writing there; start a fresh isolated session ('${HARNESS_PREFIX}'), or for maintenance run '${HARNESS_PREFIX} --no-isolated $*'" >&2
+               return 2
+             fi
+             ;;
           *) echo "harness-launcher: this profile isolates fresh sessions; use '${HARNESS_PREFIX} --isolated-session <uuid> $*' or '${HARNESS_PREFIX} --no-isolated $*'" >&2
              return 2 ;;
         esac
