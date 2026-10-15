@@ -1787,16 +1787,21 @@ STRICT_PRETOOL_SCRIPTS = {
     "pre-bash-pr-gate.sh",
 }
 STRICT_PRETOOL_MATCHER = "^(Bash|code_mode_exec|exec)$"
+# The peer-checkout guard also covers Edit/Write/apply_patch, so it keeps its
+# ordinary direct entry; only Codex code mode (exec|code_mode_exec) needs the
+# composite adapter to see each resolved command.
+PEER_GUARD_SCRIPT = "pre-tool-peer-checkout-guard.sh"
+PEER_GUARD_CODE_MODE_MATCHER = "^(code_mode_exec|exec)$"
 adapter_available = os.path.isfile(adapter)
 pretool_adapter_available = os.path.isfile(pretool_adapter)
 
-def cmd(script, event=None, timeout=None):
+def cmd(script, event=None, timeout=None, strict=False):
     path = os.path.join(hooks_dir, script)
     if event and event in ADAPTED_EVENTS and adapter_available:
         command = " ".join(
             ("bash", shlex.quote(adapter), shlex.quote(event), shlex.quote(path))
         )
-    elif event == "PreToolUse" and script in STRICT_PRETOOL_SCRIPTS:
+    elif event == "PreToolUse" and (strict or script in STRICT_PRETOOL_SCRIPTS):
         if not pretool_adapter_available:
             raise RuntimeError(
                 f"strict PreToolUse hook requires codex-pretool-adapter.py: {script}"
@@ -1886,6 +1891,12 @@ def settings_driven_config(exclusions):
                     })
                 else:
                     out_hooks.append(normalized)
+                    if event == "PreToolUse" and script == PEER_GUARD_SCRIPT:
+                        out_entries.append({
+                            "matcher": PEER_GUARD_CODE_MODE_MATCHER,
+                            "hooks": [cmd(script, event=event,
+                                          timeout=hook.get("timeout"), strict=True)],
+                        })
             if not out_hooks:
                 continue
             out_entry = {"hooks": out_hooks}

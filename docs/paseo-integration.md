@@ -98,7 +98,7 @@ Other Codex callers get the same rules through `--passthrough`: a caller `-p`/`-
   git -C <harness>/projects/<repo> worktree remove .worktrees/<slug>
   ```
 
-- Launches without a TTY never take the isolated-session route, so an isolation-default profile runs in its canonical root, as with any other non-interactive launch.
+- Fresh launches without a TTY never take the isolated-session route, so an isolation-default profile runs in its canonical root, as with any other non-interactive launch. A non-TTY Claude continuation (`--resume`, `--continue`, `--fork-session`) is owner-checked when isolation is on and refused when it belongs to the canonical checkout; a host that passes an option such as `--verbose` before `--resume` is classified as an invalid argv and still runs in the canonical root (the harness write guard covers its writes).
 
 ## Environment hygiene
 
@@ -108,6 +108,6 @@ Other Codex callers get the same rules through `--passthrough`: a caller `-p`/`-
 
 ## Known limits
 
-- An explicitly isolated `app-server` (`--isolated codex app-server`) fails closed: the isolated session root does not contain the canonical working directory. SDK hosts launch without a TTY and never isolate.
+- An explicitly isolated `app-server` (`--isolated codex app-server`) fails closed: the isolated session root does not contain the canonical working directory. SDK hosts launch without a TTY and do not start isolated sessions.
 - With the `kiro` or `codex-gateway` provider prefixes, a full model ID from Paseo is passed as-is and is not mapped through `ANTHROPIC_DEFAULT_*`.
 - With a caller `--settings` (Paseo's `fastMode`), the launcher's forced-thinking `--settings` for `xhigh`/`max` is passed as a second `--settings` ahead of it.

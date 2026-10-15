@@ -1,10 +1,11 @@
 #!/usr/bin/env zsh
 # test-restore-owner.sh — in an isolation-default profile, a restore of a
-# session that lives in the canonical (non-isolated) harness root takes the
-# legacy route instead of being rejected: a Codex rollout that exists only in
-# the source CODEX_HOME, or a Claude session whose launch record says
-# isolated=0 for this harness. An isolated owner still wins, transcripts alone
-# are not proof, and forced isolation keeps rejecting.
+# session that lives in the canonical (non-isolated) harness root is identified
+# (resolver rc 4): a Codex rollout that exists only in the source CODEX_HOME, or
+# a Claude session whose launch record says isolated=0 for this harness. The
+# launcher no longer continues it there: Codex goes through durable-history
+# prepare, Claude (or a failed prepare) is refused. An isolated owner still
+# wins and transcripts alone are not proof.
 # This suite covers the compatibility resolver for older pinned releases.
 # Current Native catalog/fresh-restore behavior has its own real-metadata tests.
 set -e
@@ -128,13 +129,14 @@ EXPECT
 }
 session_count() { find "$STATE/sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '; }
 
-# Codex: the source rollout restores in place (legacy route), never isolated.
+# Codex: a source-only rollout no longer restores in place.  The owner check
+# (rc 4) hands it to durable-history prepare for a fresh isolated session; the
+# fixture rollout is empty, so prepare refuses and nothing launches.
 before="$(session_count)"
-run_tty "$TMP/codex-tty.log" codex resume $CODEX_ID || fail 'source-only Codex restore was rejected on the default route'
-[[ -z "$(sed -n 's/^SESSION=//p' "$TMP/codex-tty.log")" ]] || fail 'source-only Codex restore must not use an isolated root'
-grep -q "resume $CODEX_ID" "$TMP/codex-tty.log" || fail 'Codex restore lost the id'
-[[ "$(session_count)" == "$before" ]] || fail 'legacy restore must not create a session'
-run_tty "$TMP/codex-tty2.log" codex --passthrough resume $CODEX_ID || fail 'passthrough source-only Codex restore was rejected'
+if run_tty "$TMP/codex-tty.log" codex resume $CODEX_ID; then fail 'source-only Codex restore must not run in the canonical root'; fi
+[[ ! -e "$TMP/codex-tty.log" ]] || fail 'refused source-only Codex restore must not launch'
+if run_tty "$TMP/codex-tty2.log" codex --passthrough resume $CODEX_ID; then fail 'passthrough source-only Codex restore must not run in the canonical root'; fi
+[[ ! -e "$TMP/codex-tty2.log" ]] || fail 'refused passthrough Codex restore must not launch'
 # an unknown id keeps the reject message and does not launch
 if run_tty "$TMP/codex-unk.log" codex resume $UNKNOWN; then fail 'unknown Codex id must still be rejected'; fi
 [[ ! -e "$TMP/codex-unk.log" ]] || fail 'unknown Codex id must not launch'
@@ -142,21 +144,20 @@ if run_tty "$TMP/codex-unk.log" codex resume $UNKNOWN; then fail 'unknown Codex 
 if ISO_FORCE=1 run_tty "$TMP/codex-forced.log" codex resume $CODEX_ID; then fail 'forced isolation must still reject a source-only Codex restore'; fi
 [[ ! -e "$TMP/codex-forced.log" ]] || fail 'forced isolation must not launch'
 [[ "$(session_count)" == "$before" ]] || fail 'rejected restore must not create a session'
-echo 'PASS: B4 default route restores a source-only Codex rollout; forced isolation still rejects'
+echo 'PASS: B4 default route no longer restores a source-only Codex rollout in the canonical root'
 
-# Claude: an isolated=0 record restores in place; a bare transcript is rejected.
+# Claude: an isolated=0 record is a canonical session; it is refused, as is a bare transcript.
 rm -rf "$STATE/launch-records"
 if run_tty "$TMP/claude-norec.log" --resume $ID; then fail 'Claude transcript without a record must be rejected'; fi
 [[ ! -e "$TMP/claude-norec.log" ]] || fail 'Claude transcript without a record must not launch'
 write_record $ID 1
 if run_tty "$TMP/claude-iso.log" --resume $ID; then fail 'isolated=1 record must be rejected without an isolated owner'; fi
 write_record $ID 0
-run_tty "$TMP/claude-rec.log" --resume $ID || fail 'isolated=0 Claude restore was rejected on the default route'
-[[ -z "$(sed -n 's/^SESSION=//p' "$TMP/claude-rec.log")" ]] || fail 'isolated=0 Claude restore must not use an isolated root'
-grep -qxF "ARG=$ID" "$TMP/claude-rec.log" || fail 'Claude restore lost the id'
-[[ "$(session_count)" == "$before" ]] || fail 'legacy Claude restore must not create a session'
+if run_tty "$TMP/claude-rec.log" --resume $ID; then fail 'isolated=0 Claude restore must be refused, not run in the canonical root'; fi
+[[ ! -e "$TMP/claude-rec.log" ]] || fail 'refused isolated=0 Claude restore must not launch'
+[[ "$(session_count)" == "$before" ]] || fail 'refused Claude restore must not create a session'
 if ISO_FORCE=1 run_tty "$TMP/claude-forced.log" --resume $ID; then fail 'forced isolation must still reject an isolated=0 Claude restore'; fi
 [[ ! -e "$TMP/claude-forced.log" ]] || fail 'forced isolation must not launch'
-echo 'PASS: B4 default route restores an isolated=0 Claude session; forced isolation still rejects'
+echo 'PASS: B4 default route refuses an isolated=0 Claude session; forced isolation still rejects'
 
 echo 'PASS: restore owner'

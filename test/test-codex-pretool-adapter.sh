@@ -355,6 +355,39 @@ for case_name in scalar_specific unknown_decision unknown_field null_decision nu
   assert_eq "$case_name canonical hook output fails closed" "$rc" "2"
 done
 
+# The peer-checkout guard runs through the adapter too (Codex code mode). It
+# reads HARNESS_HOOK_OWNER_PID as the session owner, as codex-hook-adapter.sh
+# exports it: the adapter's parent (the Codex process), never the adapter itself.
+PEER_HOOK="$TMP_ROOT/core/hooks/pre-tool-peer-checkout-guard.sh"
+cat > "$PEER_HOOK" <<'EOF'
+#!/usr/bin/env bash
+payload="$(cat)"
+jq -cn --arg command "$(printf '%s' "$payload" | jq -r '.tool_input.command')" \
+  --arg owner "${HARNESS_HOOK_OWNER_PID:-unset}" --arg runtime "${HARNESS_HOOK_RUNTIME:-}" \
+  '{command:$command,owner:$owner,runtime:$runtime}' >> "$CAPTURE"
+EOF
+chmod +x "$PEER_HOOK"
+: > "$CAPTURE"
+set +e
+OWNER_FILE="$TMP_ROOT/owner.pid"
+bash -c 'echo $$ > "$1"; printf "%s" "$2" | python3 "$3" "$4" >/dev/null 2>"$5"; exit $?' _ \
+  "$OWNER_FILE" "$(payload 'text(await tools.exec_command({cmd:"touch x",workdir:"/tmp"}));' code_mode_exec)" "$ADAPTER" "$PEER_HOOK" "$TMP_ROOT/peer.err"
+rc=$?
+set -e
+assert_eq "peer-checkout guard is an allowlisted adapter target" "$rc" "0"
+assert_eq "peer guard reaches the canonical hook once with the resolved command" \
+  "$(jq -r '.command' "$CAPTURE" | tr '\n' ' ')" "touch x "
+assert_eq "peer guard receives the adapter parent pid as owner" \
+  "$(jq -r '.owner' "$CAPTURE")" "$(cat "$OWNER_FILE")"
+assert_eq "peer guard keeps the codex runtime marker" "$(jq -r '.runtime' "$CAPTURE")" "codex"
+UNLISTED="$TMP_ROOT/core/hooks/pre-bash-unlisted.sh"
+cp "$PEER_HOOK" "$UNLISTED"
+set +e
+printf '%s' "$(payload 'touch x' Bash)" | python3 "$ADAPTER" "$UNLISTED" >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "unlisted hook is still refused" "$rc" "2"
+
 echo "---"
 echo "passed: $PASS, failed: $FAIL"
 [[ $FAIL -eq 0 ]]

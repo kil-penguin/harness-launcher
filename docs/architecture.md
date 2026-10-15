@@ -949,8 +949,9 @@ the hook from process ancestry (a second `claude` or `codex` executable above th
 that ran the hook), not from environment variables, so a stale agent environment in a
 pane shell does not demote a restore and `env -u CLAUDECODE` does not promote a nested
 launch. A nested launch may keep or lower a record's grant and never raise it, and it
-can create a grant-less `isolated=0` record, which only enables the legacy route: an
-isolated owner still wins. The nesting rule stops accidental nesting, not a deliberate
+can create a grant-less `isolated=0` record, which only identifies a canonical-owned
+session (an isolation-default profile then refuses the resume or, for a pure Codex resume, starts a fresh
+isolated session): an isolated owner still wins. The nesting rule stops accidental nesting, not a deliberate
 agent: a same-user process can still write the record file directly, double-fork so it
 is reparented to launchd, or type the launch into a pane shell (herdr, tmux, osascript),
 and each of these counts as top-level. That stays the documented same-user boundary.
@@ -967,7 +968,7 @@ Known limits, kept on purpose:
   hook runs inside a sandbox that denies it, the launch counts as nested and records no
   grant. The opt-in Codex row has not been checked against a real Codex session.
 - A caller `--settings` after `--passthrough` replaces the launcher's, so that launch has no record.
-- A planted canonical rollout in the source `CODEX_HOME` can steer a restore to the legacy route.
+- A planted canonical rollout in the source `CODEX_HOME` can steer a pure Codex resume to a fresh isolated session through durable history, or make another form refuse.
 - The Codex hook row names the Python interpreter by its Cellar path, which changes after `brew upgrade` until the next prepare.
 
 See [Terminal runtimes](terminal-runtimes.md#restore-fidelity) for the argv rules.
