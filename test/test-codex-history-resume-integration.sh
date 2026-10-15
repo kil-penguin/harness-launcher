@@ -57,23 +57,6 @@ grep -Fqx auth=excluded "$TMP/codex.log" || { echo 'FAIL: generated native home 
 [[ "$(<"$STATE/sessions/$ISOLATION_ID/journal")" == 'state=DELIVERED' ]] || { echo 'FAIL: historical journal was rewritten'; exit 1; }
 find "$STATE/sessions" -name native-history-restore.json -type f | grep -q . || { echo 'FAIL: fresh session has no private restore receipt'; exit 1; }
 
-# The shell wrapper / Orca spelling and preset forms must take the same fresh
-# local isolation as `codex resume <id>`.
-for form in '--passthrough resume' 'fast resume' '--passthrough fast resume'; do
-  rm -f "$TMP/codex.log"
-  # Start from the archive only: drop the sessions earlier runs created.
-  for created in "$STATE"/sessions/*(N/) "$STATE"/worktrees/*(N/); do
-    [[ "${created:t}" == "$ISOLATION_ID" ]] || rm -rf "$created"
-  done
-  (
-    export PATH="$TMP:$PATH" XDG_STATE_HOME="$TMP/xdg" HARNESS_SESSION_STATE_HOME="$STATE" FAKE_CODEX_LOG="$TMP/codex.log" NATIVE_ID
-    source "$ROOT/bin/aliases.zsh"
-    _harness_launcher_run "$HARNESS" codex ${=form} "$NATIVE_ID"
-  )
-  grep -Fq "home=$STATE/worktrees/" "$TMP/codex.log" || { echo "FAIL: 'codex $form <id>' did not use a fresh local isolation"; cat "$TMP/codex.log"; exit 1; }
-  grep -Fqx artifact=yes "$TMP/codex.log" || { echo "FAIL: 'codex $form <id>' home lacks archived history"; exit 1; }
-done
-
 assert_invalid_history() {
   local name="$1" payload="$2" case_root case_harness case_state rollout before after rc=0
   case_root="$TMP/invalid-$name"

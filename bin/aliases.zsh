@@ -302,24 +302,11 @@ for key in ("native_id", "home", "source_root", "isolation_id", "origin_runtime"
 
 # _harness_launcher_codex_history_request [launcher argv...]
 # Recognizes only the public, unambiguous history shortcuts before Codex's
-# normal argument parser can start a native process.  The shell wrapper and
-# Orca spell a resume as `codex --passthrough resume <id>`, and presets as
-# `codex fast resume <id>`; both are normalized to the plain form first.
-# After `--passthrough` a bare `continue` is prompt text, not a shortcut.
+# normal argument parser can start a native process.
 _harness_launcher_codex_history_request() {
   [[ "${1:-}" == codex ]] || return 1
-  local arg passthrough=false lead=0
-  # Only leading wrapper/preset words are dropped, never words after the verb.
-  for arg in "${@:2}"; do
-    case "$arg" in
-      --passthrough) passthrough=true; (( lead++ )) ;;
-      fast|base|sol|plan|rich|astra|work|272k|1m|happy|full-auto|never|bypass) (( lead++ )) ;;
-      *) break ;;
-    esac
-  done
-  set -- codex "${@:$((2 + lead))}"
   case "${2:-}" in
-    continue) $passthrough && return 0; [[ $# -eq 2 ]] && print -r -- continue ;;
+    continue) [[ $# -eq 2 ]] && print -r -- continue ;;
     resume)
       case "${3:-}" in
         --list) [[ $# -eq 3 ]] && print -r -- list ;;
@@ -1332,17 +1319,25 @@ _harness_launcher_run() {
              return 2 ;;
           4)
              # The session lives in the canonical checkout.  Never continue it
-             # there silently: Codex becomes a fresh isolated session through
-             # durable history; Claude, or a failed prepare, is refused.
-             local canonical_arg canonical_prev="" canonical_codex_id=""
+             # there silently.  Only the pure forms `codex resume <id>` and
+             # `codex --passthrough resume <id>` become a fresh isolated session
+             # through durable history; any other Codex form (preset, -m, -s, -a,
+             # -c, planner argv) would lose its flags in the rewrite and let the
+             # recorded grant be re-applied, so it is refused, as is Claude.
+             local canonical_arg canonical_prev="" canonical_codex_id="" canonical_pure=false
+             local canonical_cwd="" canonical_alt=""
              if [[ "${1:-}" == codex ]]; then
                for canonical_arg in "${@:2}"; do
                  [[ "$canonical_arg" == -- ]] && break
                  [[ "$canonical_prev" == resume && "$canonical_arg" =~ $_HARNESS_LAUNCHER_UUID_RE ]] && canonical_codex_id="${(L)canonical_arg}"
                  canonical_prev="$canonical_arg"
                done
+               if [[ $# -eq 3 && "$2" == resume && "$3" =~ $_HARNESS_LAUNCHER_UUID_RE ]] \
+                 || [[ $# -eq 4 && "$2" == --passthrough && "$3" == resume && "$4" =~ $_HARNESS_LAUNCHER_UUID_RE ]]; then
+                 canonical_pure=true
+               fi
              fi
-             if [[ -n "$canonical_codex_id" ]] && _harness_launcher_codex_history_begin "$canonical_codex_id" 2>/dev/null && [[ -n "$history_snapshot_id" ]]; then
+             if $canonical_pure && _harness_launcher_codex_history_begin "$canonical_codex_id" && [[ -n "$history_snapshot_id" ]]; then
                export HARNESS_CODEX_HISTORY_NATIVE_ID="$history_native_id"
                export HARNESS_CODEX_HISTORY_SNAPSHOT_ID="$history_snapshot_id"
                export HARNESS_CODEX_HISTORY_ORIGIN_RUNTIME="$history_origin_runtime"
@@ -1350,7 +1345,10 @@ _harness_launcher_run() {
                isolated=true
                history_local_create=true
              else
-               echo "harness-launcher: this session lives in the shared canonical checkout and would keep writing there; start a fresh isolated session ('${HARNESS_PREFIX}'), or for maintenance run '${HARNESS_PREFIX} --no-isolated $*'" >&2
+               [[ -z "$isolated_source_run_dir" ]] || canonical_cwd="--cwd ${(q-)isolated_source_run_dir} "
+               canonical_alt="start a fresh isolated session ('${HARNESS_PREFIX}'), or for maintenance run '${HARNESS_PREFIX} ${canonical_cwd}--no-isolated ${(j: :)${(q-)@}}'"
+               [[ -z "$canonical_codex_id" ]] || canonical_alt+=", or resume it as a fresh isolated session with '${HARNESS_PREFIX} ${canonical_cwd}codex resume ${canonical_codex_id}'"
+               echo "harness-launcher: this session lives in the shared canonical checkout and would keep writing there; $canonical_alt" >&2
                return 2
              fi
              ;;
