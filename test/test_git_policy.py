@@ -74,6 +74,30 @@ class GitPolicyTest(unittest.TestCase):
         argv = policy.argv(Path("/tmp/repo"), "status")
         self.assertIn("core.sshCommand=/usr/bin/ssh -F /dev/null -oBatchMode=yes -oPermitLocalCommand=no", argv)
 
+    def test_bound_ssh_remote_query_uses_only_the_explicit_github_identity(self):
+        """Letting a configured agent or alias choose authentication would escape the reviewed binding."""
+        policy = load()
+        identity = "/private/tmp/trusted-key"
+        argv = policy.remote_argv(
+            Path("/tmp/repo"), "git@reviewed-alias:owner/repository.git",
+            {"hostname": "github.com", "user": "git", "identity_file": identity},
+        )
+        command = next(value for value in argv if value.startswith("core.sshCommand="))
+        self.assertEqual(
+            command,
+            "core.sshCommand=/usr/bin/ssh -F /dev/null -oBatchMode=yes -oPermitLocalCommand=no "
+            "-oIdentitiesOnly=yes -oIdentityAgent=none -oCertificateFile=none -oHostName=github.com -oUser=git -i /private/tmp/trusted-key",
+        )
+        self.assertEqual(argv[-2:], ["git@reviewed-alias:owner/repository.git", "refs/heads/main"])
+
+    def test_bound_ssh_rejects_scp_paths_with_dot_components(self):
+        """A dot owner or repository component makes the displayed SCP path ambiguous."""
+        policy = load()
+        binding = {"hostname": "github.com", "user": "git", "identity_file": "/private/tmp/trusted-key"}
+        for url in ("git@alias:./repository.git", "git@alias:owner/...git", "https://github.com/owner/repository.git", "/private/tmp/repository.git", "ssh://git@github.com/owner/repository.git"):
+            with self.assertRaisesRegex(ValueError, "origin"):
+                policy.remote_argv(Path("/tmp/repo"), url, binding)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -665,4 +665,5 @@ still require native review; see [hook trust](docs/codex-integration.md#hook-tru
 ## Trusted preservation
 
 See [the trusted preservation guide](docs/trusted-preservation.md) for the
-one-shot, native-confirmed Git preservation command.
+one-shot, native-confirmed Git preservation command, including its strict
+opt-in GitHub SSH identity binding for live remote verification.

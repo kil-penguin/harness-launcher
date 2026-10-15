@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import re
+import shlex
 import stat
 import subprocess
 
@@ -15,6 +17,7 @@ ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C", "GIT_OPTIONAL_LOCKS"
 PREFIX = ("-c", "core.fsmonitor=false", "-c", "core.useBuiltinFSMonitor=false", "-c", "diff.external=false")
 DENIED = ("include.", "includeif.", "core.fsmonitor", "core.sshcommand", "diff.external", "credential.", "url.")
 HOOKS = ("post-checkout", "post-merge", "reference-transaction", "post-index-change", "pre-push")
+SCP_GITHUB = re.compile(r"git@[A-Za-z0-9][A-Za-z0-9.-]*:[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*\.git\Z")
 
 
 def identity(path: Path, single_link: bool = True) -> tuple[int, int, int, int, int, int, str]:
@@ -78,15 +81,28 @@ def validate(repo: Path, timeout: float | None = None) -> tuple[tuple[int, int, 
     return config_identity, rows, _origin(rows, repo, timeout), _hooks(repo, rows)
 
 
-def argv(repo: Path, *args: str) -> list[str]:
-    ssh = f"{SSH} -F /dev/null -oBatchMode=yes -oPermitLocalCommand=no"
-    return [GIT, *PREFIX, "-c", f"core.sshCommand={ssh}", "-C", str(repo), *args]
+def _ssh_command(ssh: dict[str, str] | None = None) -> str:
+    parts = [SSH, "-F", "/dev/null", "-oBatchMode=yes", "-oPermitLocalCommand=no"]
+    if ssh is not None:
+        if (set(ssh) != {"hostname", "user", "identity_file"} or ssh.get("hostname") != "github.com"
+                or ssh.get("user") != "git" or not isinstance(ssh.get("identity_file"), str)
+                or not Path(ssh["identity_file"]).is_absolute()):
+            raise ValueError("unsupported SSH binding")
+        parts.extend(["-oIdentitiesOnly=yes", "-oIdentityAgent=none", "-oCertificateFile=none", "-oHostName=github.com", "-oUser=git", "-i", ssh["identity_file"]])
+    return shlex.join(parts)
 
 
-def remote_argv(repo: Path, url: str) -> list[str]:
+def argv(repo: Path, *args: str, ssh: dict[str, str] | None = None) -> list[str]:
+    ssh_command = _ssh_command(ssh)
+    return [GIT, *PREFIX, "-c", f"core.sshCommand={ssh_command}", "-C", str(repo), *args]
+
+
+def remote_argv(repo: Path, url: str, ssh: dict[str, str] | None = None) -> list[str]:
+    if ssh is not None and SCP_GITHUB.fullmatch(url) is None:
+        raise ValueError("unsupported SSH origin")
     if url.startswith("/"):
-        return argv(repo, "ls-remote", "--exit-code", f"--upload-pack={UPLOAD_PACK}", url, "refs/heads/main")
-    return argv(repo, "ls-remote", "--exit-code", url, "refs/heads/main")
+        return argv(repo, "ls-remote", "--exit-code", f"--upload-pack={UPLOAD_PACK}", url, "refs/heads/main", ssh=ssh)
+    return argv(repo, "ls-remote", "--exit-code", url, "refs/heads/main", ssh=ssh)
 
 
 def operation_argv(repo: Path, operation: str, paths: tuple[str, ...] = (), target: str = "", stash: str = "") -> list[str]:

@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +76,125 @@ def make_stash_request(raw: Path, host):
 
 
 class TrustedPreservationTest(unittest.TestCase):
+    def test_ssh_binding_rejects_unsafe_identity_boundaries(self) -> None:
+        """Removing any location, file, ancestor, or strict-object check would admit an unsafe identity."""
+        host = load_host()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve(); repo, _request = make_stash_request(root, host)
+            common = repo / ".git"
+            key = root / "key"; key.write_text("synthetic\n"); key.chmod(0o600)
+            binding = {"hostname": "github.com", "user": "git", "identity_file": str(key)}
+            for changes in ({"hostname": "other.invalid"}, {"user": "other"}, {"extra": True}, {"identity_file": "relative"}):
+                with self.subTest(changes=changes), self.assertRaises(ValueError):
+                    host._ssh_binding(binding | changes, repo, common)
+            with self.assertRaises(ValueError):
+                host._ssh_binding(binding, repo, common, [{"path": str(key)}])
+            inside = repo / "key"; inside.write_text("synthetic\n"); inside.chmod(0o600)
+            external_common = root / "common"; external_common.mkdir()
+            common_key = external_common / "key"; common_key.write_text("synthetic\n"); common_key.chmod(0o600)
+            link = root / "symlink"; link.symlink_to(key)
+            hard = root / "hard"; os.link(key, hard)
+            percent = root / "%h"; percent.write_text("synthetic\n"); percent.chmod(0o600)
+            unsafe = root / "unsafe"; unsafe.mkdir(); unsafe.chmod(0o777)
+            unsafe_key = unsafe / "key"; unsafe_key.write_text("synthetic\n"); unsafe_key.chmod(0o600)
+            mode_key = root / "mode-key"; mode_key.write_text("synthetic\n"); mode_key.chmod(0o640)
+            for candidate in (inside, common_key, link, hard, percent, unsafe_key, mode_key):
+                with self.subTest(candidate=candidate.name), self.assertRaises(ValueError):
+                    host._ssh_binding(binding | {"identity_file": str(candidate)}, repo, external_common)
+
+    def test_ssh_drift_at_each_final_boundary_rejects_without_stash(self) -> None:
+        """An ancestor change or late key change must not survive the final metadata checks."""
+        host = load_host()
+        for phase in ("confirmation-ancestor", "pre-mutation-key"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw).resolve(); repo, request = make_stash_request(root, host)
+                directory = root / "identities"; directory.mkdir(mode=0o700)
+                key = directory / "key"; key.write_text("synthetic\n"); key.chmod(0o600)
+                git(repo, "remote", "set-url", "origin", "git@reviewed-alias:owner/repository.git")
+                request.update({"snapshot_sha256": host.capture_snapshot(repo)["sha256"], "ssh": {"hostname": "github.com", "user": "git", "identity_file": str(key)}})
+                queries = []
+                def remote(*_args):
+                    queries.append(True)
+                    if len(queries) == 2 and phase == "pre-mutation-key": key.chmod(0o640)
+                    return request["expected_remote"]
+                def confirm(_prompt):
+                    if phase == "confirmation-ancestor": directory.chmod(0o750)
+                    return True
+                with mock.patch.object(host, "_live_remote", side_effect=remote):
+                    result = host.execute_request(request, confirm=confirm)
+                self.assertEqual(result, {"status": "rejected-drift"})
+                self.assertEqual(git_optional(repo, "rev-parse", "--verify", "--quiet", "refs/stash"), "")
+
+    def test_confirmation_cannot_move_identity_into_reader_paths(self) -> None:
+        """Checking identity after readers would expose a moved key before rejecting drift."""
+        host = load_host()
+        for destination in ("evidence", "pending"):
+            with self.subTest(destination=destination), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw).resolve(); repo, request = make_stash_request(root, host)
+                key = root / "dedicated-key"; key.write_text("synthetic secret\n"); key.chmod(0o600)
+                identity = (key.stat().st_dev, key.stat().st_ino)
+                evidence = root / "review.txt"; evidence.write_text("review\n"); evidence.chmod(0o600)
+                request["evidence"] = [{"path": str(evidence), "sha256": hashlib.sha256(b"review\n").hexdigest()}]
+                git(repo, "remote", "set-url", "origin", "git@reviewed-alias:owner/repository.git")
+                request.update({"snapshot_sha256": host.capture_snapshot(repo)["sha256"], "ssh": {"hostname": "github.com", "user": "git", "identity_file": str(key)}})
+                reads = []; original = Path.read_bytes
+                def guarded_read(path):
+                    info = path.stat()
+                    if (info.st_dev, info.st_ino) == identity: reads.append(str(path))
+                    return original(path)
+                def confirm(_prompt):
+                    key.replace(evidence if destination == "evidence" else repo / "tracked.txt")
+                    return True
+                with mock.patch.object(host, "_live_remote", return_value=request["expected_remote"]), mock.patch.object(Path, "read_bytes", guarded_read):
+                    result = host.execute_request(request, confirm=confirm)
+                self.assertEqual(result, {"status": "rejected-drift"})
+                self.assertEqual(reads, [], "Python must not read the synthetic identity")
+                self.assertEqual(git_optional(repo, "rev-parse", "--verify", "--quiet", "refs/stash"), "")
+
+    def test_ssh_binding_records_metadata_without_reading_the_private_key(self) -> None:
+        """Hashing or reading a private key would expose credential material to Python."""
+        host = load_host()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve(); repo, request = make_stash_request(root, host)
+            key = root / "dedicated-key"; key.write_text("private material must stay unread\n"); key.chmod(0o600)
+            request["ssh"] = {"hostname": "github.com", "user": "git", "identity_file": str(key)}
+            common = Path(git(repo, "rev-parse", "--git-common-dir"))
+            common = common if common.is_absolute() else repo / common
+            with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("private key read")):
+                binding = host._ssh_binding(request["ssh"], repo, common.resolve())
+            self.assertEqual(binding["identity_file"], str(key))
+            self.assertEqual(binding["hostname"], "github.com")
+            self.assertEqual(binding["user"], "git")
+
+    def test_ssh_request_binds_the_live_query_and_native_prompt(self) -> None:
+        """Dropping the request binding would silently use the default SSH authentication path."""
+        host = load_host()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve(); repo, request = make_stash_request(root, host)
+            key = root / "dedicated-key"; key.write_text("fixture key\n"); key.chmod(0o600)
+            git(repo, "remote", "set-url", "origin", "git@reviewed-alias:owner/repository.git")
+            snapshot = host.capture_snapshot(repo)
+            request.update({"snapshot_sha256": snapshot["sha256"], "ssh": {"hostname": "github.com", "user": "git", "identity_file": str(key)}})
+            prompts = []
+            with mock.patch.object(host, "_live_remote", return_value=request["expected_remote"]) as live:
+                result = host.execute_request(request, confirm=lambda prompt: prompts.append(prompt) or True)
+            self.assertEqual(result, {"status": "success"})
+            self.assertEqual(live.call_args.args[2], request["ssh"])
+            self.assertIn("ssh-binding=", prompts[0])
+
+    def test_ssh_identity_drift_during_confirmation_rejects_before_mutation(self) -> None:
+        """Changing a reviewed identity after the dialog must not retain approval for its replacement."""
+        host = load_host()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve(); repo, request = make_stash_request(root, host)
+            key = root / "dedicated-key"; key.write_text("fixture key\n"); key.chmod(0o600)
+            git(repo, "remote", "set-url", "origin", "git@reviewed-alias:owner/repository.git")
+            request.update({"snapshot_sha256": host.capture_snapshot(repo)["sha256"], "ssh": {"hostname": "github.com", "user": "git", "identity_file": str(key)}})
+            with mock.patch.object(host, "_live_remote", return_value=request["expected_remote"]):
+                result = host.execute_request(request, confirm=lambda _prompt: key.chmod(0o640) or True)
+            self.assertEqual(result, {"status": "rejected-drift"})
+            self.assertEqual(git_optional(repo, "rev-parse", "--verify", "--quiet", "refs/stash"), "")
+
     def test_fsmonitor_callback_config_is_rejected_before_confirmation(self) -> None:
         """A repository-configured fsmonitor program must never run before the decision."""
         host = load_host()

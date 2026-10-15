@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 GIT = "/usr/bin/git"
 OSASCRIPT = "/usr/bin/osascript"
-ALLOWED = {"version", "operation", "repo", "expected_head", "expected_remote", "snapshot_sha256", "evidence", "expires_at", "session", "paths", "target", "stash"}
+ALLOWED = {"version", "operation", "repo", "expected_head", "expected_remote", "snapshot_sha256", "evidence", "expires_at", "session", "paths", "target", "stash", "ssh"}
 REQUIRED = {"version", "operation", "repo", "expected_head", "expected_remote", "snapshot_sha256", "evidence", "expires_at", "session"}
 
 _snapshot_spec = importlib.util.spec_from_file_location("preservation_snapshot", Path(__file__).with_name("preservation_snapshot.py"))
@@ -70,6 +70,41 @@ def _label(value: Any) -> bool:
     return isinstance(value, str) and 0 < len(value) <= 256 and not any(ord(char) < 32 or ord(char) == 127 for char in value)
 
 
+def _file_metadata(path: Path) -> dict[str, int]:
+    info = path.lstat()
+    if (path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) & (stat.S_IRWXG | stat.S_IRWXO)):
+        raise ValueError("unsafe SSH identity")
+    return {key: getattr(info, f"st_{key}") for key in ("dev", "ino", "uid", "gid", "size", "mtime_ns", "ctime_ns")} | {"mode": stat.S_IMODE(info.st_mode)}
+
+
+def _ancestor_metadata(path: Path) -> list[dict[str, int | str]]:
+    rows: list[dict[str, int | str]] = []
+    for parent in reversed((path, *path.parents)):
+        info = parent.lstat(); mode = stat.S_IMODE(info.st_mode)
+        if parent.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid not in {0, os.getuid()} or mode & (stat.S_IWGRP | stat.S_IWOTH) and not (info.st_uid == 0 and mode & stat.S_ISVTX):
+            raise ValueError("unsafe SSH identity ancestor")
+        rows.append({"path": str(parent), "dev": info.st_dev, "ino": info.st_ino, "uid": info.st_uid, "gid": info.st_gid, "mode": mode})
+    return rows
+
+
+def _ssh_binding(ssh: dict[str, str], repo: Path, common: Path, evidence: Any = ()) -> dict[str, Any]:
+    if set(ssh) != {"hostname", "user", "identity_file"} or ssh.get("hostname") != "github.com" or ssh.get("user") != "git":
+        raise ValueError("unsupported SSH binding")
+    value = ssh.get("identity_file")
+    if not isinstance(value, str) or "%" in value:
+        raise ValueError("unsafe SSH identity")
+    key = Path(value)
+    if not key.is_absolute() or key.resolve(strict=True) != key or any(root == key or root in key.parents for root in (repo, common)):
+        raise ValueError("unsafe SSH identity")
+    metadata = _file_metadata(key)
+    for row in evidence if isinstance(evidence, list) else ():
+        if isinstance(row, dict) and isinstance(row.get("path"), str):
+            info = Path(row["path"]).lstat()
+            if (info.st_dev, info.st_ino) == (metadata["dev"], metadata["ino"]): raise ValueError("SSH identity overlaps evidence")
+    return {"hostname": "github.com", "user": "git", "identity_file": str(key), "identity": metadata, "ancestors": _ancestor_metadata(key.parent)}
+
+
 def _validate(request: dict[str, Any]) -> tuple[Path, list[str]]:
     if (set(request) - ALLOWED or REQUIRED - set(request) or isinstance(request.get("version"), bool)
             or not isinstance(request.get("version"), int) or request["version"] != 1):
@@ -82,6 +117,8 @@ def _validate(request: dict[str, Any]) -> tuple[Path, list[str]]:
     repo = Path(request["repo"])
     if not repo.is_absolute() or repo.is_symlink() or repo.resolve(strict=True) != repo:
         raise ValueError("repo must be absolute non-symlink")
+    if "ssh" in request and (not isinstance(request["ssh"], dict) or set(request["ssh"]) != {"hostname", "user", "identity_file"}):
+        raise ValueError("invalid SSH binding")
     paths = request.get("paths", [])
     if operation == "stash-paths":
         if not isinstance(paths, list) or not paths or not all(isinstance(path, str) for path in paths) or len(paths) != len(set(paths)):
@@ -173,21 +210,22 @@ def _confirm(confirm: Callable[[str], bool], prompt: str, seconds: int) -> bool:
     raise ValueError("malformed confirmation result")
 
 
-def _prompt(repo: Path, request: dict[str, Any], paths: list[str], evidence_digest: str) -> str:
+def _prompt(repo: Path, request: dict[str, Any], paths: list[str], evidence_digest: str, ssh_binding: dict[str, Any] | None) -> str:
     argv = _policy.operation_argv(repo, request["operation"], tuple(paths), request.get("target", ""), request.get("stash", ""))
     evidence = json.dumps(request["evidence"], sort_keys=True, separators=(",", ":"))
     argv_json = json.dumps(argv, separators=(",", ":"))
     prompt = (f"Run once\nargv={argv_json}\nrepo={repo}\nsession={request['session']}\n"
               f"origin={_policy.validate(repo)[2]}\nsnapshot={request['snapshot_sha256']}\nevidence={evidence}\nevidence-digest={evidence_digest}\nexpires={request['expires_at']}\nNo automatic undo.")
+    if ssh_binding is not None: prompt += f"\nssh-binding={json.dumps(ssh_binding, sort_keys=True, separators=(',', ':'))}"
     if len(prompt) > 4096: raise ValueError("prompt too large")
     return prompt
 
 
-def _live_remote(repo: Path, deadline: float | None = None) -> str:
+def _live_remote(repo: Path, deadline: float | None = None, ssh: dict[str, str] | None = None) -> str:
     timeout = None if deadline is None else max(0.01, deadline - time.monotonic())
     url = _policy.validate(repo, timeout=timeout)[2]
     timeout = None if deadline is None else max(0.01, deadline - time.monotonic())
-    result = subprocess.run(_policy.remote_argv(repo, url), text=True, capture_output=True, timeout=timeout, env=_policy.ENV)
+    result = subprocess.run(_policy.remote_argv(repo, url, ssh), text=True, capture_output=True, timeout=timeout, env=_policy.ENV)
     if result.returncode: raise ValueError("live remote unavailable")
     remote = result.stdout.split()
     if len(remote) < 2:
@@ -215,13 +253,13 @@ def _valid_stash_result(repo: Path, stash: str, head: str, paths: list[str]) -> 
     return changed == set(paths)
 
 
-def _operation(repo: Path, request: dict[str, Any], paths: list[str], lock_fd: int, deadline: float) -> tuple[str, str]:
+def _operation(repo: Path, request: dict[str, Any], paths: list[str], lock_fd: int, deadline: float, ssh_binding: dict[str, Any] | None) -> tuple[str, str]:
     if time.time() >= request["expires_at"] or time.monotonic() >= deadline:
         return "rejected-drift", ""
     operation = request["operation"]
     if operation == "stash-paths":
         old = run_git(repo, "rev-parse", "--verify", "--quiet", "refs/stash", check=False).stdout.strip()
-        result = _run_mutation(repo, request, paths, lock_fd, deadline)
+        result = _run_mutation(repo, request, paths, lock_fd, deadline, ssh_binding)
         if result is None: return "rejected-drift", ""
         new = run_git(repo, "rev-parse", "--verify", "--quiet", "refs/stash", check=False).stdout.strip()
         return ("success", new) if result.returncode == 0 and new and new != old and _valid_stash_result(repo, new, request["expected_head"], paths) else ("failed-or-partial", "")
@@ -229,22 +267,29 @@ def _operation(repo: Path, request: dict[str, Any], paths: list[str], lock_fd: i
         target = request["target"]
         if target != request["expected_remote"] or run_git(repo, "merge-base", "--is-ancestor", request["expected_head"], target, check=False).returncode != 0:
             return "rejected", ""
-        result = _run_mutation(repo, request, paths, lock_fd, deadline)
+        result = _run_mutation(repo, request, paths, lock_fd, deadline, ssh_binding)
         if result is None: return "rejected-drift", ""
         return ("success", target) if result.returncode == 0 and output(repo, "rev-parse", "HEAD") == target else ("failed-or-partial", "")
     stash = request["stash"]
     if output(repo, "rev-parse", "refs/stash") != stash or len(output(repo, "rev-list", "--parents", "-n", "1", stash).split()) < 3:
         return "rejected", ""
-    result = _run_mutation(repo, request, paths, lock_fd, deadline)
+    result = _run_mutation(repo, request, paths, lock_fd, deadline, ssh_binding)
     if result is None: return "rejected-drift", ""
     return ("success", stash) if result.returncode == 0 and output(repo, "rev-parse", "refs/stash") == stash else ("failed-or-partial", "")
 
 
-def _run_mutation(repo: Path, request: dict[str, Any], paths: list[str], lock_fd: int, deadline: float) -> subprocess.CompletedProcess[str] | None:
+def _run_mutation(repo: Path, request: dict[str, Any], paths: list[str], lock_fd: int, deadline: float, ssh_binding: dict[str, Any] | None) -> subprocess.CompletedProcess[str] | None:
     remaining = deadline - time.monotonic()
     if remaining <= 0: return None
     try:
         _policy.validate(repo, timeout=remaining)
+        if ssh_binding is not None:
+            common = Path(output(repo, "rev-parse", "--git-common-dir"))
+            common = (common if common.is_absolute() else repo / common).resolve(strict=True)
+            try:
+                if _ssh_binding(request["ssh"], repo, common, request["evidence"]) != ssh_binding: return None
+            except (OSError, ValueError):
+                return None
     except subprocess.TimeoutExpired:
         return None
     if time.time() >= request["expires_at"] or time.monotonic() >= deadline:
@@ -263,11 +308,12 @@ def execute_request(request: dict[str, Any], confirm: Callable[[str], bool] = na
         try:
             dependencies_before = (_dependencies(), _policy.dependencies())
             config_before = _policy.validate(repo)
+            ssh_binding = None if "ssh" not in request else _ssh_binding(request["ssh"], repo, (common if common.is_absolute() else repo / common).resolve(strict=True), request["evidence"])
             evidence_before = _evidence(request)
             before = capture_snapshot(repo)
             if before["sha256"] != request["snapshot_sha256"] or before["head"] != request["expected_head"] or before["remote"] != request["expected_remote"]:
                 return {"status": "rejected-drift"}
-            if _live_remote(repo, deadline) != request["expected_remote"]:
+            if _live_remote(repo, deadline, request.get("ssh")) != request["expected_remote"]:
                 return {"status": "rejected-drift"}
             if request["operation"] == "ff-only" and (output(repo, "symbolic-ref", "--short", "HEAD") != "main" or output(repo, "rev-parse", "--abbrev-ref", "@{upstream}") != "origin/main"):
                 return {"status": "rejected"}
@@ -275,20 +321,27 @@ def execute_request(request: dict[str, Any], confirm: Callable[[str], bool] = na
                 return {"status": "rejected-index"}
             if request["operation"] == "stash-paths" and not _valid_stash_paths(repo, paths):
                 return {"status": "rejected"}
-            if time.monotonic() >= deadline or not _confirm(confirm, _prompt(repo, request, paths, evidence_before), int(deadline - time.monotonic())):
+            if time.monotonic() >= deadline or not _confirm(confirm, _prompt(repo, request, paths, evidence_before, ssh_binding), int(deadline - time.monotonic())):
                 return {"status": "cancelled"}
+            try:
+                ssh_after = None if ssh_binding is None else _ssh_binding(request["ssh"], repo, (common if common.is_absolute() else repo / common).resolve(strict=True), request["evidence"])
+            except (OSError, ValueError):
+                return {"status": "rejected-drift"}
+            if ssh_after != ssh_binding:
+                return {"status": "rejected-drift"}
             after = capture_snapshot(repo)
             try:
                 evidence_after = _evidence(request)
             except ValueError:
                 return {"status": "rejected-drift"}
             if (time.monotonic() >= deadline or not _lock_matches(fd, common if common.is_absolute() else repo / common) or after["sha256"] != before["sha256"]
-                    or evidence_after != evidence_before or (_dependencies(), _policy.dependencies()) != dependencies_before or _policy.validate(repo) != config_before):
+                    or evidence_after != evidence_before or (_dependencies(), _policy.dependencies()) != dependencies_before or _policy.validate(repo) != config_before
+                    or ssh_after != ssh_binding):
                 return {"status": "rejected-drift"}
-            if _live_remote(repo, deadline) != request["expected_remote"] or time.monotonic() >= deadline:
+            if _live_remote(repo, deadline, request.get("ssh")) != request["expected_remote"] or time.monotonic() >= deadline:
                 return {"status": "rejected-drift"}
             try:
-                status, _detail = _operation(repo, request, paths, fd, deadline)
+                status, _detail = _operation(repo, request, paths, fd, deadline, ssh_binding)
             except (OSError, subprocess.SubprocessError, ValueError):
                 return {"status": "failed-or-partial"}
             return {"status": status}
