@@ -5,6 +5,9 @@ Notable changes are recorded here. This project follows semantic versioning for 
 ## Unreleased — Trusted preservation
 
 - Add the `harness-preserve` trusted preservation command to the next release.
+- Add an opt-in, fixed GitHub SSH identity binding for the command's live
+  remote query. It disables SSH config and agents, pins host/user/identity,
+  and binds safe non-content identity metadata to the native confirmation.
 
 ## 0.56.0 — 2026-10-15
 
