@@ -51,12 +51,17 @@ for test_file in "$ROOT"/test/test-*.sh; do
   passed=$((passed + 1))
 done
 
+
 printf '==> test_profile_resolver.py (python3)\n'
 python3 -m unittest discover -s "$ROOT/test" -p 'test_profile_resolver.py'
 passed=$((passed + 1))
 
 source "$ROOT/bin/harness-common.sh"
 PYTHON_BIN="$(harness_python3_resolve)"
+printf '==> preservation executor suites (%s)\n' "$PYTHON_BIN"
+for python_test in test_git_policy.py test_preservation_snapshot.py test_trusted_preservation.py test_preservation_adversarial.py; do
+  "$PYTHON_BIN" "$ROOT/test/$python_test"
+done
 printf '==> test_mcp_paths.py (%s)\n' "$PYTHON_BIN"
 "$PYTHON_BIN" "$ROOT/test/test_mcp_paths.py"
 passed=$((passed + 1))

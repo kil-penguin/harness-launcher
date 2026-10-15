@@ -1,0 +1,15 @@
+#!/bin/zsh -f
+set -eu
+
+script=${0:A}
+root=${script:h}
+case $# in
+  0) ;;
+  1) [[ $1 == --help ]] && { print 'Usage: harness-preserve < request.json'; exit 0; } ;&
+  *) print -u2 'harness-preserve: unsupported arguments'; exit 2 ;;
+esac
+for python in /opt/homebrew/opt/python@3.13/bin/python3.13 /usr/local/opt/python@3.13/bin/python3.13; do
+  [[ -x $python ]] && exec "$python" -I -B "$root/trusted_preservation.py"
+done
+print -u2 'harness-preserve: python@3.13 unavailable'
+exit 127
