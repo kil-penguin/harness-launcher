@@ -66,3 +66,8 @@ The following generally belong upstream unless the launcher creates or worsens t
 - a malicious `launcher.env` inside a project the user knowingly registered as trusted.
 
 If you are unsure whether a finding is in scope, use the private advisory form.
+
+## Trusted preservation boundary
+
+`harness-preserve` is a same-UID, one-shot execution boundary. It does not
+attest caller identity or protect against replacement of trusted installed files.

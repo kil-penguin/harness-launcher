@@ -4,6 +4,7 @@ The README covers installation and the first registered project. These documents
 
 ## User guides
 
+- [Trusted preservation](trusted-preservation.md) — one-shot, native-confirmed Git preservation.
 - [Architecture and trust boundaries](architecture.md) — registration, command routing, generated runtime homes, and security boundaries.
 - [Codex integration](codex-integration.md) — profile overlays, MCP translation, skills, plugins, hooks, and compatibility behavior.
 - [Session titles in cmux](session-titles.md) — exact-session Claude/Codex title transport, native rename priority, and legacy hook coordination.

@@ -2,6 +2,10 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## Unreleased — Trusted preservation
+
+- Add the `harness-preserve` trusted preservation command to the next release.
+
 ## 0.56.0 — 2026-10-15
 
 Routing changes apply only to profiles with `HARNESS_SESSION_ISOLATION_DEFAULT=1`; other profiles keep their behavior, including in-place restores. The one exception is the `--bg`/`--background` plus continuation-flag reclassification, which also applies in every profile when isolation is chosen explicitly (`--isolated`, `--isolated-session` or `HARNESS_SESSION_ISOLATION=1`).
