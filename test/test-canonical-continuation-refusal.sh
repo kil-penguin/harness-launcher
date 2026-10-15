@@ -106,7 +106,7 @@ for form in 'codex --passthrough resume' 'codex resume'; do
 done
 # Every other Codex form would lose its flags in the rewrite and let the recorded
 # grant be re-applied: refused without touching history, with the pure form named.
-for form in 'codex plan resume' 'codex fast resume' 'codex -s read-only resume' 'codex -m gpt-5.5 resume' 'codex -a never resume' '-c x=1 resume'; do
+for form in 'codex -s read-only resume' 'codex -m gpt-5.5 resume' 'codex -a never resume' '-c x=1 resume' 'codex plan -s read-only resume' 'codex plan 1m resume' 'codex work resume'; do
   : > "$CALLS"
   [[ "$form" == -c* ]] && form="codex $form"
   run 1 ${=form} $CODEX_ID
@@ -114,6 +114,45 @@ for form in 'codex plan resume' 'codex fast resume' 'codex -s read-only resume' 
   [[ $RC == 2 && ! -e "$STUB_LOG" ]] || fail "'$form <id>' must refuse without launching, got $RC [$ERR]"
   [[ "$ERR" == *'fresh isolated'* && "$ERR" == *"test --no-isolated ${form} $CODEX_ID"* && "$ERR" == *"test codex resume $CODEX_ID"* ]] || fail "'$form <id>' refusal lacks the exact alternatives: $ERR"
 done
+# Profile presets (fast|base|sol|plan|rich|astra) before `resume` are the caller's
+# explicit choice: they reach history prepare and stay in the rewrite.
+for form in 'codex fast resume' 'codex plan resume' 'codex fast --passthrough resume'; do
+  : > "$CALLS"
+  run 1 ${=form} $CODEX_ID
+  grep -qx "prepare $CODEX_ID" "$CALLS" || fail "'$form <id>' did not reach history prepare"
+  [[ $RC == 2 && ! -e "$STUB_LOG" ]] || fail "'$form <id>' with failed prepare must refuse, got $RC"
+  [[ "$ERR" == *"test --no-isolated $form $CODEX_ID"* && "$ERR" == *'fresh isolated'* ]] || fail "'$form <id>' lacks the alternatives: $ERR"
+  # L-a: the pure alternative would fail for the same reason.
+  [[ "$ERR" != *"test codex resume"* ]] || fail "failed prepare must not offer the pure alternative: $ERR"
+done
+# Words after the preset that are native flags, prompt text or after --passthrough refuse.
+for form in 'codex fast resume' ; do
+  : > "$CALLS"
+  run 1 ${=form} $CODEX_ID -s read-only
+  [[ ! -s "$CALLS" && $RC == 2 && ! -e "$STUB_LOG" ]] || fail "'$form <id> -s read-only' must refuse without history (rc=$RC)"
+  [[ "$ERR" == *"test codex resume $CODEX_ID"* ]] || fail "native-flag refusal must name the pure alternative: $ERR"
+done
+: > "$CALLS"
+run 1 codex --passthrough fast resume $CODEX_ID
+# The route treats them as native/prompt words of a fresh run (isolated), never as a resume:
+# no history, and never the canonical root.
+[[ ! -s "$CALLS" ]] || fail 'words after --passthrough must not reach history'
+[[ $RC != 0 || -n "$(sed -n 's/^SESSION=//p' "$STUB_LOG")" ]] || fail 'words after --passthrough must not run in the canonical root'
+rm -f "$STUB_LOG"
+# A successful prepare launches a fresh isolated session with the preset applied
+# and without adding a recorded bypass.
+SNAP=$(printf 'c%.0s' {1..64})
+_harness_launcher_codex_history_select() { print -r -- "native_id=$2"; print -r -- "snapshot_id=$SNAP"; print -r -- "origin_runtime=legacy-unknown"; }
+for form in 'codex fast' 'codex plan'; do
+  run 1 ${=form} resume $CODEX_ID
+  [[ $RC == 0 && -e "$STUB_LOG" ]] || fail "'$form <id>' with a prepared snapshot must launch (rc=$RC) [$ERR]"
+  [[ -n "$(sed -n 's/^SESSION=//p' "$STUB_LOG")" ]] || fail "'$form <id>' must launch in a fresh isolated root"
+  grep -q "^ARGS=${form} resume $CODEX_ID\$" "$STUB_LOG" || fail "'$form <id>' lost its preset: $(cat "$STUB_LOG")"
+  ! grep -q 'dangerously-bypass' "$STUB_LOG" || fail "'$form <id>' must not gain a bypass"
+done
+_harness_launcher_codex_history_select() { print -r -- "native_id=$2"; }
+echo 'PASS: M-A profile presets reach history prepare and stay applied; other words refuse'
+
 # Web planner argv with a context word before --passthrough.
 run 1 codex plan 1m --passthrough resume $CODEX_ID --some-flag
 [[ $RC == 2 && ! -e "$STUB_LOG" ]] || fail "planner argv must refuse, got $RC"

@@ -109,6 +109,8 @@ expect -c 'set timeout 60; log_user 0; spawn zsh '"$TMP"'/tty-run.zsh; expect eo
   || fail 'isolation-default wrapper restore failed on a TTY'
 line="$(grep '^codex:' "$LOG")"
 [[ "$line" == *"<resume>"*"<$CODEX_ID>" ]] || fail "isolation-default wrapper restore lost the id: $line"
+# Model and effort come from the selected durable-history snapshot, not the empty clone home.
+[[ "$line" == *"<-m> <gpt-6.1-sol>"* && "$line" == *"<model_reasoning_effort=\"medium\">"* ]] || fail "isolation-default history restore lost the model/effort: $line"
 after_sessions="$(find "$STATE/sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
 (( after_sessions == before_sessions + 1 )) || fail 'isolation-default canonical-only Codex restore did not create a fresh isolated session'
 echo 'PASS: E5 isolation-default wrapper restore of a canonical-only rollout starts a fresh isolated session'

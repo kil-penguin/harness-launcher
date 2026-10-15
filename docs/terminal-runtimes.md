@@ -359,8 +359,8 @@ isolated session or refuses:
   transcript alone is never proof.
 
 An isolated owner always wins, for every spelling. On return 4, only the pure Codex
-forms `codex resume <id>` and `codex --passthrough resume <id>` become a fresh isolated
-session through durable history (the exact form takes that route before the owner check).
+forms `codex [profile preset] resume <id>` and `codex [profile preset] --passthrough resume <id>` become a fresh isolated
+session through durable history (the exact form takes that route before the owner check; the model and effort come from the selected snapshot).
 Claude, every other Codex form (preset, `-m`, `-s`, `-a`, `-c`, planner argv: the rewrite
 would drop the flags and re-apply the recorded grant) and a failed history preparation are
 refused with two alternatives: start a fresh isolated session, or

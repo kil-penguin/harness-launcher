@@ -423,6 +423,12 @@ _harness_launcher_restore_probe() {
   restore_model="" restore_effort="" restore_context=""
   if [[ "$agent" == codex ]]; then
     hits=("$HARNESS_DIR"/.harness/codex/sessions/*/*/*/rollout-*-$id.jsonl(N.om[1]))
+    # A durable-history resume starts in a fresh home that is hydrated only after
+    # this probe: read the model and effort from the selected immutable snapshot.
+    if (( ${#hits} == 0 )) && [[ "${HARNESS_CODEX_HISTORY_SNAPSHOT_ID:-}" =~ '^[0-9a-f]{64}$' ]]; then
+      local history_state="${HARNESS_SESSION_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher}"
+      hits=("$history_state"/native-history/snapshots/$HARNESS_CODEX_HISTORY_SNAPSHOT_ID/data/sessions/*/*/*/rollout-*-$id.jsonl(N.om[1]))
+    fi
   else
     hits=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/$id.jsonl(N.om[1]))
   fi
@@ -1319,21 +1325,32 @@ _harness_launcher_run() {
              return 2 ;;
           4)
              # The session lives in the canonical checkout.  Never continue it
-             # there silently.  Only the pure forms `codex resume <id>` and
-             # `codex --passthrough resume <id>` become a fresh isolated session
-             # through durable history; any other Codex form (preset, -m, -s, -a,
-             # -c, planner argv) would lose its flags in the rewrite and let the
+             # there silently.  Only the pure forms `codex [preset...] [--passthrough]
+             # resume <id>` become a fresh isolated session through durable history
+             # (presets are kept, so the caller's profile wins over the recorded
+             # grant); any other Codex form (-m, -s, -a, -c, context words, prompt
+             # text, planner argv) would lose its flags in the rewrite and let the
              # recorded grant be re-applied, so it is refused, as is Claude.
              local canonical_arg canonical_prev="" canonical_codex_id="" canonical_pure=false
-             local canonical_cwd="" canonical_alt=""
+             local canonical_cwd="" canonical_alt="" canonical_prepare_failed=false
+             local -a canonical_presets=()
              if [[ "${1:-}" == codex ]]; then
                for canonical_arg in "${@:2}"; do
                  [[ "$canonical_arg" == -- ]] && break
                  [[ "$canonical_prev" == resume && "$canonical_arg" =~ $_HARNESS_LAUNCHER_UUID_RE ]] && canonical_codex_id="${(L)canonical_arg}"
                  canonical_prev="$canonical_arg"
                done
-               if [[ $# -eq 3 && "$2" == resume && "$3" =~ $_HARNESS_LAUNCHER_UUID_RE ]] \
-                 || [[ $# -eq 4 && "$2" == --passthrough && "$3" == resume && "$4" =~ $_HARNESS_LAUNCHER_UUID_RE ]]; then
+               # Pure forms: [profile presets...] [--passthrough] resume <id>, nothing else.
+               # Presets stay in the rewrite, so profile_explicit keeps the recorded
+               # grant from being re-applied.  Native flags, context words, prompt text
+               # and anything after --passthrough but `resume <id>` are refused.
+               local -a canonical_rest=("${@:2}")
+               while (( ${#canonical_rest} )) && [[ "${canonical_rest[1]}" == (fast|base|sol|plan|rich|astra) ]]; do
+                 canonical_presets+=("${canonical_rest[1]}")
+                 canonical_rest=("${(@)canonical_rest[2,-1]}")
+               done
+               [[ "${canonical_rest[1]-}" != --passthrough ]] || canonical_rest=("${(@)canonical_rest[2,-1]}")
+               if (( ${#canonical_rest} == 2 )) && [[ "${canonical_rest[1]}" == resume && "${canonical_rest[2]}" =~ $_HARNESS_LAUNCHER_UUID_RE ]]; then
                  canonical_pure=true
                fi
              fi
@@ -1341,13 +1358,15 @@ _harness_launcher_run() {
                export HARNESS_CODEX_HISTORY_NATIVE_ID="$history_native_id"
                export HARNESS_CODEX_HISTORY_SNAPSHOT_ID="$history_snapshot_id"
                export HARNESS_CODEX_HISTORY_ORIGIN_RUNTIME="$history_origin_runtime"
-               set -- codex resume "$history_native_id"
+               set -- codex "${canonical_presets[@]}" resume "$history_native_id"
                isolated=true
                history_local_create=true
              else
+               ! $canonical_pure || canonical_prepare_failed=true
                [[ -z "$isolated_source_run_dir" ]] || canonical_cwd="--cwd ${(q-)isolated_source_run_dir} "
                canonical_alt="start a fresh isolated session ('${HARNESS_PREFIX}'), or for maintenance run '${HARNESS_PREFIX} ${canonical_cwd}--no-isolated ${(j: :)${(q-)@}}'"
-               [[ -z "$canonical_codex_id" ]] || canonical_alt+=", or resume it as a fresh isolated session with '${HARNESS_PREFIX} ${canonical_cwd}codex resume ${canonical_codex_id}'"
+               # The pure alternative would fail for the same reason after a failed prepare.
+               [[ -z "$canonical_codex_id" ]] || $canonical_prepare_failed || canonical_alt+=", or resume it as a fresh isolated session with '${HARNESS_PREFIX} ${canonical_cwd}codex resume ${canonical_codex_id}'"
                echo "harness-launcher: this session lives in the shared canonical checkout and would keep writing there; $canonical_alt" >&2
                return 2
              fi
