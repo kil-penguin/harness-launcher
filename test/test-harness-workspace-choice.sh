@@ -42,6 +42,14 @@ tr -d '\r' < "$TMP/shared.out" | grep -qx 'shared' || {
   exit 1
 }
 
+# The shared choice is maintenance: its label must say harness writes there need
+# a session lease (the canonical checkout refuses unleased writes).
+tr -d '\r' < "$TMP/shared.out" | grep -qE '^ *2\).*maintenance; harness writes need a session lease' || {
+  echo 'FAIL: the shared menu label must say it is maintenance and needs a session lease' >&2
+  cat "$TMP/shared.out" >&2
+  exit 1
+}
+
 if choose 'q\r' "$TMP/cancel.out"; then
   echo 'FAIL: q must cancel without selecting a workspace' >&2
   exit 1

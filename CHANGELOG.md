@@ -2,6 +2,13 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.56.0 — 2026-10-15
+
+- A continuation of a session that lives in the canonical harness checkout no longer silently keeps running there. A Codex resume reaches durable-history preparation and starts a fresh isolated session, including the shell-wrapper/Orca spelling (`codex --passthrough resume <id>`) and preset forms (`codex fast resume <id>`). A Claude resume of a canonical-owned session, and a Codex one whose preparation fails, is refused with two exact alternatives: start a fresh isolated session, or `<prefix> --no-isolated <original args>` for maintenance.
+- Behavior change: a continuation (`--resume/-r`, `--continue/-c`, `--fork-session`, and `--bg` together with one of them) is now checked for its owner without a TTY too. A non-interactive continuation whose owner is not found is refused (it used to take the legacy route). Fresh runs (`--remote-control`, `--session-id`, `-w/--worktree`, `--tmux`, `--from-pr`, `--bg` alone), client/cloud commands (`attach`, `respawn`, `--teleport`), print runs (`-p`) and management commands keep their routes.
+- Codex code mode: the peer-checkout guard hook is allowlisted for the PreToolUse adapter, receives the Codex process as its session owner (`HARNESS_HOOK_OWNER_PID`, as in the PostToolUse adapter), and is emitted for `exec|code_mode_exec` next to its direct Bash/Edit/Write/apply_patch entry. Existing Codex homes are not regenerated.
+- The bare-launcher menu labels the shared choice as maintenance whose harness writes need a session lease.
+
 ## 0.55.0 — 2026-10-15
 
 - Isolated Codex homes inherit natively installed plugins that both the canonical and the session `config/codex-surface.json` list in `runtime_audit.native_codex_plugins`, so a harness audit that requires such a plugin no longer always fails inside an isolated session. Only a plugin the canonical `.harness/codex` has installed and enabled is carried: its single cached version, an exact local `[marketplaces.*]` table and `[plugins."<id>"] enabled = true`. Hook trust, auth, tokens, other runtime state and unlisted plugins are never copied, so plugin hooks stay under native `/hooks` review. Session decisions always win and nothing is replaced or deleted; a native uninstall is not reversed. A missing canonical installation leaves the home unchanged and the audit still fails. Behavior is identical under `HARNESS_CODEX_GLOBAL_PLUGIN_POLICY=manage|preserve`, and `~/.codex` is neither read nor written.

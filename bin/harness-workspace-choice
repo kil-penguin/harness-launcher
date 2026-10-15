@@ -22,7 +22,7 @@ while :; do
   {
     echo 'Workspace'
     echo '  1) Isolated workspace (Recommended)'
-    echo '  2) Use current workspace'
+    echo '  2) Use current workspace (maintenance; harness writes need a session lease)'
     printf 'Choose [1]: '
   } >&2
   IFS= read -r choice || exit 1
