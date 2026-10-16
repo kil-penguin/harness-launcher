@@ -305,6 +305,11 @@ root. Old Native `.retired-*` tombs stay recoverable. Archives and completed
 journals are outside the workspace GC target and are never automatically pruned.
 See [Durable native Codex history](codex-history.md).
 
+`harness-session report --json` observes retention metadata without invoking GC,
+archive, history verification, or hold cleanup. Optional `--sizes` traversal is
+bounded and metadata-only. It always reports `delete_safe: false`; see
+[session disk diagnostics](session-report.md) for unknown states and size semantics.
+
 Delivery has one kernel-locked lane per host. The session submits a base SHA,
 binary patch, NUL-delimited path/mode/blob manifest, canonical source, and
 canonical remote bound by one digest and rechecked before and after verification.

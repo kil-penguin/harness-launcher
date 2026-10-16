@@ -2,6 +2,13 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.59.0 — 2026-10-16
+
+- Add explicit `harness-session report --json` retention diagnostics with optional
+  bounded size and managed runtime metadata. The command preserves session state,
+  treats unverified provenance and archives conservatively, and never authorizes
+  deletion. Installed symlink entry points are covered by regression tests.
+
 ## Unreleased — Trusted preservation
 
 - Add the `harness-preserve` trusted preservation command to the next release.

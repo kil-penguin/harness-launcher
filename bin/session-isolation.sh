@@ -1220,6 +1220,32 @@ case "${1:-}" in
   recover) shift; recover "$1" ;;
   list) list ;;
   heartbeat) shift; heartbeat_session "$1" ;;
+  report)
+    shift
+    # Homebrew exposes this script through a bin symlink; modules live beside
+    # its target. Bound link traversal so a concurrent broken install fails.
+    report_script="${BASH_SOURCE[0]}"
+    for report_hop in {1..40}; do
+      report_dir="$(cd -P -- "$(dirname -- "$report_script")" && pwd -P)" || exit 2
+      report_script="$report_dir/$(basename -- "$report_script")"
+      [[ -L "$report_script" ]] || break
+      report_script="$(readlink "$report_script")" || exit 2
+      case "$report_script" in
+        /*) ;;
+        *) report_script="$report_dir/$report_script" ;;
+      esac
+    done
+    [[ -f "$report_script" && ! -L "$report_script" ]] || {
+      echo 'harness-session: cannot resolve report entry' >&2; exit 2;
+    }
+    report_dir="$(cd -P -- "$(dirname -- "$report_script")" && pwd -P)" || exit 2
+    [[ -f "$report_dir/harness-common.sh" && -r "$report_dir/harness-common.sh" \
+        && -f "$report_dir/harness_session_report.py" && -r "$report_dir/harness_session_report.py" ]] || {
+      echo 'harness-session: report modules unavailable' >&2; exit 2;
+    }
+    source "$report_dir/harness-common.sh"
+    report_python="$(harness_python3_resolve)" || exit $?
+    exec "$report_python" -I "$report_dir/harness_session_report.py" "$@" ;;
   gc) shift; [[ $# -eq 0 ]] || exit 2; gc_sessions ;;
   reserve-hold) shift; [[ $# -eq 5 ]] || exit 2; reserve_hold "$@" ;;
   release-hold) shift; [[ $# -eq 2 ]] || exit 2; release_hold "$@" ;;
@@ -1229,5 +1255,5 @@ case "${1:-}" in
   submit) shift; submit "$1" ;;
   integrate) shift; [[ $# -eq 1 ]] || exit 2; integrate "$1" ;;
   close) shift; [[ $# -eq 1 ]] || exit 2; close_session "$1" ;;
-  *) echo 'usage: harness-session {create|resolve-run-dir|resume|transition|exit|recover|list|heartbeat|gc|reserve-hold|release-hold|submit|integrate|close|discard|sandbox-check}' >&2; exit 2 ;;
+  *) echo 'usage: harness-session {create|resolve-run-dir|resume|transition|exit|recover|list|heartbeat|report|gc|reserve-hold|release-hold|submit|integrate|close|discard|sandbox-check}' >&2; exit 2 ;;
 esac
