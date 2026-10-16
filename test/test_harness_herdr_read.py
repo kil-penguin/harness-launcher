@@ -95,9 +95,30 @@ class ReadTest(unittest.TestCase):
         for status,code,message,expected in [(404,'SECRET','SECRET','guard_not_supported'),(409,'guard_mismatch','guard target no longer matches','guard_mismatch'),(502,'guarded_read_unavailable','Guarded pane read is unavailable','guarded_read_unavailable'),(400,'invalid_request','Invalid guarded pane read request','invalid_request'),(403,'read_only','This device can only watch','read_only'),(403,'revoked','Drive access is unavailable','revoked'),(502,'SECRET',None,'guarded_read_unavailable')]:
             self.calls.clear();self.failure=(status,{'error':{'code':code,'message':message}});result,rows=self.run_cli(['--body']);self.assertEqual(result,1,rows);self.assertEqual(rows,[{'error':{'code':expected}}]);self.assertEqual(len(self.posts()),1);self.assertNotIn('SECRET',self.raw)
     def test_shared_absolute_deadline_includes_identity_snapshot_and_reply(self):
-        self.delays={'/identity':.03,'/snapshot':.03,'/read':.03};started=time.monotonic()
-        with patch.object(cli.local,'REQUEST_DEADLINE_SECONDS',.075):code,rows=self.run_cli(['--body'])
-        self.assertEqual(code,1,rows);self.assertEqual(rows,[{'error':{'code':'deadline_exceeded'}}]);self.assertLess(time.monotonic()-started,.14);self.assertLessEqual(len(self.posts()),1)
+        from types import SimpleNamespace
+        clock = [100.0]
+        calls = []
+        class Transport:
+            def pane_read_json(transport, method, path, body=None, deadline_seconds=None):
+                calls.append((method, path, deadline_seconds))
+                if deadline_seconds < .03:
+                    clock[0] += deadline_seconds
+                    raise cli.local.TransportError('deadline_exceeded')
+                clock[0] += .03
+                if path.endswith('/identity'):
+                    return {'protocol':1,'device_id':LOCAL,'native':{'version':'fixture'},'capabilities':{'read_metadata_v1':True,'guarded_mutation_v1':False}}
+                if path.endswith('/snapshot'):
+                    return {'protocol':1,'device_id':LOCAL,'server_epoch':'epoch','workspaces':[{'workspace_id':'w'}],'tabs':[{'workspace_id':'w','tab_id':'t'}],'panes':[copy.deepcopy(ROW)]}
+                return reply()
+        self.client = Transport()
+        with patch.object(cli.local,'REQUEST_DEADLINE_SECONDS',.075), patch.object(cli.pane_read,'time',SimpleNamespace(monotonic=lambda:clock[0])), patch.object(cli.local,'time',SimpleNamespace(monotonic=lambda:clock[0])):
+            code, rows = self.run_cli(['--body'])
+        self.assertEqual(code,1,rows)
+        self.assertEqual(rows,[{'error':{'code':'deadline_exceeded'}}])
+        self.assertEqual([(method,path) for method,path,_ in calls],[('GET','/api/cli/v1/identity'),('GET','/api/cli/v1/snapshot'),('POST','/api/cli/v1/pane/read')])
+        for call, expected in zip(calls,(.075,.045,.015)):
+            self.assertAlmostEqual(call[2],expected,places=9)
+        self.assertAlmostEqual(clock[0]-100.0,.075,places=9)
     def test_timeout_headers_and_body_for_metadata_and_read_close_owned_socket(self):
         for path,stage in (('/identity','headers'),('/snapshot','body'),('/pane/read','headers'),('/pane/read','body')):
             self.calls.clear();self.stalled.clear();self.closed.clear();self.stall=(path,stage)
