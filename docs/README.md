@@ -4,6 +4,8 @@ The README covers installation and the first registered project. These documents
 
 ## User guides
 
+- [Session disk diagnostics](session-report.md) — explicit read-only retention reasons, runtime metadata, and bounded size observations.
+
 - [Trusted preservation](trusted-preservation.md) — one-shot, native-confirmed Git preservation.
 - [Architecture and trust boundaries](architecture.md) — registration, command routing, generated runtime homes, and security boundaries.
 - [Codex integration](codex-integration.md) — profile overlays, MCP translation, skills, plugins, hooks, and compatibility behavior.
