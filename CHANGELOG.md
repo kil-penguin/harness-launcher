@@ -2,6 +2,18 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.60.0 — 2026-10-17
+
+- Add explicit device-UUID queries and bounded pane reads through
+  `harness-herdr-web cli`, using the existing authenticated HTTPS peer route.
+- Add guarded text, keys, commands, agent prompts, and owned resource lifecycle
+  actions. Versioned server capabilities and exact target bindings are required;
+  private durable intents preserve status and cancellation after response loss.
+- Add explicit agent UI answers and context-checked Codex interrupt/exit requests.
+  These report observed transport effects, not provider acknowledgement or exit.
+- Add managed agent launch preflight and bounded status waiting. Ambiguous effects
+  are retained for lookup and are never automatically submitted again.
+
 ## 0.59.0 — 2026-10-16
 
 - Add explicit `harness-session report --json` retention diagnostics with optional
