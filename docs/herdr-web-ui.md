@@ -35,7 +35,79 @@ harness-herdr-web configure  # enforce the managed keys and file modes
 harness-herdr-web token --copy   # put the token on the clipboard for the first browser login
 harness-herdr-web usage      # one line of Claude and Codex plan usage, for herdr's tab bar
 harness-herdr-web usage --watch  # the same usage as a live board, for a herdr popup
+harness-herdr-web cli devices # read-only HTTPS-peer device metadata
 ```
+
+## HTTPS peer CLI
+
+`harness-herdr-web cli` exposes read-only JSON metadata plus guarded JSONL input operations for the installed
+Herdr Web service. It uses the host's existing authenticated HTTPS peer route;
+it does not open SSH, accept a URL/proxy/port override, or expose a token.
+
+```bash
+harness-herdr-web cli devices
+harness-herdr-web cli workspaces --device <full-uuid>
+harness-herdr-web cli tabs --device <full-uuid> --workspace <workspace-id>
+harness-herdr-web cli panes --device <full-uuid> --workspace <workspace-id> --tab <tab-id>
+harness-herdr-web cli agents --device <full-uuid> --pane <pane-id>
+harness-herdr-web cli agent-wait --device <full-uuid> --pane <pane-id> --until working --until done --timeout-seconds 30
+```
+
+`agent-wait` requires one to five distinct `--until` values from `idle`, `working`,
+`blocked`, `done`, and `unknown`, plus a one-to-240-second timeout. It issues only
+bounded metadata GETs and reports a sampled matching status only. It cannot observe
+a session change that leaves the exposed pane tuple unchanged, prove turn/provider
+completion or process exit, or authorize exit, close, or interrupt. Ctrl-C stops
+only the local observer.
+
+Copy a complete UUID from `devices`; names, `local`, prefixes, tab order and
+focus are not selectors. The output contains only device roster metadata and
+workspace/tab/pane/terminal membership with agent kind and status. It omits
+paths, titles, command lines, prompts, transcripts, agent sessions and terminal
+body text.
+
+The CLI first verifies the owner-private managed installation at
+`~/.local/share/herdr-web-local/secrets/access-token`; a present but unsafe
+installation fails closed. Only when that installation is absent can it use the
+existing plugin configuration. Both paths connect only to `127.0.0.1:7317`. On the
+external Mini role it supplies the fixed Herdr HTTPS origin tuple needed by the
+installed entry; caller-provided origins, redirects and proxy settings are not
+used.
+
+The service must advertise `read_metadata_v1`. An older Web service returns a
+clear unsupported result. Pane body reads, create, launch, agent answer,
+interrupt, exit and close remain separate pending capabilities.
+
+Guarded target/input, keys, run, agent prompt, status and cancel additionally
+require fresh Native guarded support. Missing support refuses the call without a
+legacy fallback. Agent prompt additionally requires the exact managed Claude or
+Codex binding that Native reports; its success means PTY acceptance, not an
+agent/provider answer acknowledgement.
+Use an owner-private mode-0700 directory and mode-0600 regular files with no
+symlink ancestors or hardlinks. Literal input comes from a bounded UTF-8 file,
+never a command-line argument. `guard-target` exclusively creates its output file:
+
+```bash
+harness-herdr-web cli guard-target --device <full-uuid> --pane <pane-id> --out <absolute-private-target-file>
+harness-herdr-web cli input --device <full-uuid> --target-file <absolute-private-target-file> --text-file <absolute-private-text-file> --new-operation
+harness-herdr-web cli agent-prompt --device <full-uuid> --target-file <absolute-private-target-file> --text-file <absolute-private-text-file> --new-operation
+harness-herdr-web cli status --intent <intent-uuid>
+harness-herdr-web cli cancel --intent <intent-uuid>
+```
+
+`run` uses `--command-file` and adds a Native-controlled Enter; `keys` accepts
+only its closed key list. `agent-prompt` reads literal UTF-8 once, permits literal
+line/tab/carriage-return/escape bytes, rejects empty/NUL text, and has Native add
+the one delayed Enter. Every input/run/keys/agent-prompt command requires
+`--new-operation`; after loss, use only the same intent's status or cancel.
+The CLI durably stores an intent and prints its safe UUID receipt before prepare
+or dispatch. Keep that receipt for status/cancel recovery. Output is safe JSONL;
+the target, agent session, ticket and payload stay private.
+
+Completion records PTY byte acceptance, not command success or agent receipt.
+After a lost response, use only status/cancel for the same intent. The CLI never
+replays prepare or dispatch. `operation_unknown` has no effect counters and
+does not prove zero effects. A new invocation is an explicit new operation.
 
 Open `http://127.0.0.1:7317` (or your `PORT`) and paste the token when asked. The session cookie is scoped to `127.0.0.1`, so every local port receives it. `pbcopy` also syncs through Universal Clipboard.
 
@@ -113,3 +185,21 @@ To remove the plugin:
 herdr plugin action invoke devswha.herdr-web-ui.stop
 herdr plugin uninstall devswha.herdr-web-ui
 ```
+
+Managed launch preflight commands select only target-registered profiles and never accept a shell command, cwd, argv, environment, workspace, tab, or pane selector:
+
+```bash
+harness-herdr-web cli launch-catalog --device <full-uuid>
+harness-herdr-web cli launch-sessions --device <full-uuid>
+harness-herdr-web cli launch-preview --device <full-uuid> --catalog-revision <revision> --profile <profile> --runtime <claude|codex> --preset <preset>
+harness-herdr-web cli launch --device <full-uuid> --catalog-revision <revision> --profile <profile> --runtime <claude|codex> --preset <preset> --plan-digest <64-lower-hex> --new-request
+harness-herdr-web cli launch-status --intent <launch-intent-uuid>
+```
+
+`launch` re-reads the target catalog, records and flushes a private intent receipt before its one launch POST, then emits safe JSONL only. If the response is lost or observation becomes unknown, `launch-status` uses the saved request UUID for GET-only recovery and never replays the launch. Catalog/session/preview output omits registered directories, native/session IDs, launcher argv, and free-text reasons; launch output omits the request body, session, error message, and all paths.
+
+The [UI answer CLI](herdr-ui-answer-cli.md) consumes only an explicitly advertised Web workflow capability; it accepts ordinary Claude option indices and never advances steps automatically.
+
+The unadvertised [owned lifecycle CLI](herdr-lifecycle-cli.md) uses separate private owner receipts and one explicit operation per command.
+
+The unadvertised [bounded pane read CLI](herdr-pane-read-cli.md) keeps terminal bodies behind explicit `--body` selection and a current exact pane tuple.

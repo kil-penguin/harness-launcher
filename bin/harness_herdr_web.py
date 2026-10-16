@@ -462,6 +462,9 @@ def build_parser():
 
 
 def main(argv):
+    if argv and argv[0] == "cli":
+        import harness_herdr_cli
+        return harness_herdr_cli.main(argv[1:])
     args = build_parser().parse_args(argv)
     if args.command == "usage":
         import harness_herdr_usage

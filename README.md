@@ -338,7 +338,16 @@ harness-paseo sync --reload                    # Paseo providers from the profil
 harness-herdr-web install                      # herdr web ui, local-only behind a token
 harness-herdr-web usage                        # Claude/Codex plan usage, pace and exhaustion time
 harness-herdr-web usage --watch                # the same as a live board for a herdr popup
+harness-herdr-web cli devices                   # sanitized HTTPS-peer device metadata
+harness-herdr-web cli input --device <uuid> --target-file <private-file> --text-file <private-file> --new-operation
+harness-herdr-web cli agent-wait --device <uuid> --pane <pane-id> --until working --until done --timeout-seconds 30
 ```
+
+The [UI answer CLI](docs/herdr-ui-answer-cli.md) prepares an ordinary Claude option workflow and executes one explicit Web-derived step per command, with private receipts and get/cancel-only recovery after uncertainty.
+
+The unadvertised [owned lifecycle CLI](docs/herdr-lifecycle-cli.md) creates one owned workspace root, interrupts or closes only a completed private create receipt, and recovers the same operation without replay.
+
+The unadvertised [bounded pane read CLI](docs/herdr-pane-read-cli.md) returns metadata by default; `--body` explicitly opts into one bounded visible-text read as JSON.
 
 A plain Codex `app-server` runs without `-p` behind a JSON-RPC guard that keeps every thread working directory inside the selected harness. See [Paseo integration](docs/paseo-integration.md).
 
