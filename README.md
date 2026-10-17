@@ -235,6 +235,15 @@ harness-auto claude base
 harness-auto kiro-cli base
 ```
 
+Claude can also be selected explicitly with `ex claude base -- prompt` or
+`harness-exec /path/to/harness claude base -- prompt`. Existing implicit Claude
+presets still work. The launcher consumes one selector: `claude claude -- text`
+keeps the second `claude` as a native argument. Native management commands such
+as `claude auth status` and `claude --version` bypass session preparation and
+model/settings injection. Outer `--cwd` and workspace controls precede the
+selector; `harness-auto claude --cwd DIR --isolated-session UUID ...` preserves
+those controls. Explicit Claude cannot select a different runtime prefix.
+
 This is the supported command override for Orca's built-in Claude, Codex, and Kiro agent entries. It does not infer a profile from repository names or remotes; the worktree must live below its registered harness boundary.
 
 Orca-specific behavior (v0.33.0+) is described in [Orca ADE integration](docs/orca-integration.md): `CODEX_HOME` sanitization inside Orca terminals, the opt-in `HARNESS_ORCA_AGENT_HOOKS=1` Codex status hook in a harness's `config/launcher.env`, and mapping Orca's `--resume <id>` restore to isolated sessions.

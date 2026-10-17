@@ -73,7 +73,7 @@ echo "PASS: harness-auto selects alpha from a nested worktree"
   HOME="$HOME_DIR" HARNESS_AUTO_TEST_LOG="$LOG" \
     "$PREFIX/bin/harness-auto" claude base --passthrough --permission-mode plan --effort high
 )
-grep -Fqx 'ARGV: <base> <--passthrough> <--permission-mode> <plan> <--effort> <high>' "$LOG" || {
+grep -Fqx 'ARGV: <claude> <base> <--passthrough> <--permission-mode> <plan> <--effort> <high>' "$LOG" || {
   echo "FAIL: harness-auto changed SDK passthrough arguments" >&2
   cat "$LOG" >&2
   exit 1
@@ -151,8 +151,8 @@ grep -Fqx "HARNESS:$ALPHA_REAL" "$LOG" || {
   echo "FAIL: harness-auto did not select alpha for Claude" >&2
   exit 1
 }
-grep -Fqx 'ARGV: <--resume> <session-123>' "$LOG" || {
-  echo "FAIL: harness-auto leaked its Claude selector into Claude argv" >&2
+grep -Fqx 'ARGV: <claude> <--resume> <session-123>' "$LOG" || {
+  echo "FAIL: harness-auto dropped its raw Claude selector before launcher entry" >&2
   exit 1
 }
 
@@ -306,3 +306,16 @@ accept_codex_args "-C=$ALPHA_WORKTREE" exec x
 accept_codex_args --passthrough exec -- -C "$OUTSIDE_DIR"
 
 echo "PASS: harness-auto validates attached and post-marker Codex -C forms"
+
+# A retained auto agent belongs after the recognized leading workspace controls.
+: > "$LOG"
+(
+  cd "$ALPHA_WORKTREE"
+  HOME="$HOME_DIR" HARNESS_AUTO_TEST_LOG="$LOG" \
+    "$PREFIX/bin/harness-auto" claude --cwd "$ALPHA_WORKTREE" --isolated-session aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa claude -- text
+)
+grep -Fqx "ARGV: <--cwd> <$ALPHA_WORKTREE> <--isolated-session> <aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa> <claude> <claude> <--> <text>" "$LOG" || {
+  echo 'FAIL: auto hid cwd/owner controls or consumed the caller claude' >&2
+  exit 1
+}
+echo 'PASS: auto controls precede the retained agent and literal caller tail'

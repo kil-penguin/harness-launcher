@@ -119,3 +119,11 @@ assert_route legacy 1 attach "$U"
 assert_route legacy 1 --teleport abc
 
 echo 'PASS: default-isolation route matrix is explicit and bounded'
+
+# The classifier consumes canonical grammar, never a second runtime selector.
+assert_route isolate 1 claude resume
+assert_route isolate 1 claude --resume ignored-after-positional-text
+for management in auth doctor mcp plugin help --help --version; do
+  assert_route legacy 1 "$management"
+  assert_route legacy 0 "$management"
+done

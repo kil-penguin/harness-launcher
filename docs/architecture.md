@@ -67,6 +67,7 @@ The prefix function and executable profile both delegate through `harness-exec` 
 ```text
 ex                         interactive TUI
 ex <mode>                  direct Claude Code
+ex claude <mode>           direct Claude Code, explicit selector
 ex fable                   direct Claude Code, fable alias + high effort
 ex codex <profile>         native Codex CLI
 ex kiro-cli <mode>         native Kiro CLI
@@ -75,6 +76,14 @@ ex codex-gateway <mode>    Claude Code through a Codex gateway
 ```
 
 Runtime-specific arguments remain arrays until execution. The launcher passes unknown arguments through to the selected CLI.
+
+An explicit `claude` is consumed once at the runtime-selector position, after
+optional leading `--cwd <dir>` and workspace controls. `ex claude claude -- text`
+preserves the second `claude` as a native argument. `harness-auto claude ...`
+places its retained agent after only those leading controls, without searching
+later option values or prompt text. First-token native management commands such
+as `ex claude auth status` bypass session preparation and model/settings
+injection. Existing implicit Claude presets remain supported.
 
 In shell-auto mode, PWD remains the profile-selection authority. Explicit
 Codex `--cd`, `--cd=`, and `-C` values are canonicalized and must exist inside

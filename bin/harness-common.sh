@@ -104,6 +104,11 @@ harness_claude_bootstrap_eligible() {
   return 0
 }
 
+# Source-only argv format query; no runtime or profile state is consulted.
+harness_launcher_raw_claude_contract() {
+  printf '%s\n' raw-claude-v1
+}
+
 # harness_claude_is_management_command <word>: native Claude subcommands and
 # informational flags that must run without launcher model/MCP flags.
 harness_claude_is_management_command() {
@@ -336,6 +341,12 @@ harness_session_isolation_default_route() {
     return 0
   fi
   [ "$#" -gt 0 ] || { printf '%s\n' legacy; return 0; }
+
+  # Canonical input: never strip a Claude discriminator here.
+  if harness_claude_is_management_command "$1"; then
+    printf '%s\n' legacy
+    return 0
+  fi
 
   case "$1" in
     --isolated|--no-isolated|--isolated-session)
