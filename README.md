@@ -343,6 +343,9 @@ harness-herdr-web cli input --device <uuid> --target-file <private-file> --text-
 harness-herdr-web cli agent-wait --device <uuid> --pane <pane-id> --until working --until done --timeout-seconds 30
 ```
 
+Device display names support printable Unicode. Select devices by their complete
+UUID; display names never grant input or lifecycle authority.
+
 The [UI answer CLI](docs/herdr-ui-answer-cli.md) prepares an ordinary Claude option workflow and executes one explicit Web-derived step per command, with private receipts and get/cancel-only recovery after uncertainty.
 
 The unadvertised [owned lifecycle CLI](docs/herdr-lifecycle-cli.md) creates one owned workspace root, interrupts or closes only a completed private create receipt, and recovers the same operation without replay.

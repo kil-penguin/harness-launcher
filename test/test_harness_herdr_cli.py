@@ -148,6 +148,43 @@ class CliReadTest(unittest.TestCase):
         self.assertEqual(headers["X-Forwarded-Proto"], "https")
         self.assertEqual(headers["Origin"], "https://herdr.kilpenguin.com")
 
+    def test_devices_preserves_printable_unicode_display_names(self):
+        third = "33333333-3333-4333-8333-333333333333"
+        self.server.routes["/api/machines"] = {"machines": [
+            {"id": "local", "name": "데스크톱", "state": "connected", "cwd": "DO_NOT_LEAK"},
+            {"id": REMOTE, "name": "노트북", "state": "connected", "role": None},
+            {"id": third, "name": "휴대용", "state": "connected"},
+        ]}
+        self.assertEqual(cli.execute(["devices"], client=self.client()), {"devices": [
+            {"id": LOCAL, "name": "데스크톱", "state": "connected"},
+            {"id": REMOTE, "name": "노트북", "state": "connected"},
+            {"id": third, "name": "휴대용", "state": "connected"},
+        ]})
+        for name in ("日本語", "Café", "Desktop 🐧", "é" * 256):
+            with self.subTest(name=name):
+                self.server.routes["/api/machines"]["machines"] = [
+                    {"id": "local", "name": name, "state": "connected"}]
+                self.assertEqual(cli.execute(["devices"], client=self.client())["devices"], [
+                    {"id": LOCAL, "name": name, "state": "connected"}])
+
+    def test_devices_filters_control_format_and_oversize_display_names(self):
+        names = ["line\nnext", "carriage\rreturn", "tab\tname", "\x1b[31mred", "\x00", "\x7f",
+                 "\x85", "\x9b", "\u2028", "\u2029", "\u202e", "\u2066", "\u200b", "\ud800", "한" * 257]
+        for name in names:
+            with self.subTest(name=repr(name)):
+                self.server.routes["/api/machines"] = {"machines": [
+                    {"id": "local", "name": name, "state": "connected"}]}
+                self.assertEqual(cli.execute(["devices"], client=self.client()), {"devices": []})
+
+    def test_unicode_device_names_do_not_broaden_identifiers_or_agent_metadata(self):
+        self.server.routes["/api/machines"] = {"machines": [
+            {"id": "１１１１１１１１-1111-4111-8111-111111111111", "name": "노트북", "state": "connected"}]}
+        self.assertEqual(cli.execute(["devices"], client=self.client()), {"devices": []})
+        self.assertFalse(cli.valid_id("pane-한"))
+        self.assertFalse(cli.safe_text("상태"))
+        with self.assertRaisesRegex(cli.CommandError, "invalid_device_id"):
+            cli.exact_uuid("１１１１１１１１-1111-4111-8111-111111111111")
+
     def test_post_json_sends_only_json_to_guarded_route(self):
         self.assertEqual(self.client().post_json("/api/cli/v1/guarded/prepare", {"method": "x"}), {"ok": True})
         path, headers, body = self.server.calls[-1]
