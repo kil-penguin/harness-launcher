@@ -2,6 +2,11 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.60.2 — 2026-10-18
+
+- Allow owned, non-group/world-writable common receipt parents for lifecycle CLI
+  commands while keeping private receipt directories strictly mode 0700.
+
 ## 0.60.1 — 2026-10-18
 
 - Preserve printable Unicode device display names in `harness-herdr-web cli devices`
