@@ -61,7 +61,9 @@ completion or process exit, or authorize exit, close, or interrupt. Ctrl-C stops
 only the local observer.
 
 Copy a complete UUID from `devices`; names, `local`, prefixes, tab order and
-focus are not selectors. The output contains only device roster metadata and
+focus are not selectors. Device display names preserve printable Unicode up to
+256 characters; control and format characters are filtered. Identifier, agent
+kind and status validation remains unchanged. The output contains only device roster metadata and
 workspace/tab/pane/terminal membership with agent kind and status. It omits
 paths, titles, command lines, prompts, transcripts, agent sessions and terminal
 body text.

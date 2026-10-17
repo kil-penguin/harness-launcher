@@ -2,6 +2,11 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.60.1 — 2026-10-18
+
+- Preserve printable Unicode device display names in `harness-herdr-web cli devices`
+  while retaining control-character filtering and exact UUID selection.
+
 ## 0.60.0 — 2026-10-17
 
 - Add explicit device-UUID queries and bounded pane reads through

@@ -310,7 +310,7 @@ def valid_device(row, local_id):
         response_uuid(local_id if row.get("id") == "local" else row.get("id"))
     except CommandError:
         return False
-    return safe_text(row["name"]) and row["state"] in MACHINE_STATES and (row.get("role") is None or row.get("role") in ("watch", "drive"))
+    return device_label(row["name"]) and row["state"] in MACHINE_STATES and (row.get("role") is None or row.get("role") in ("watch", "drive"))
 
 
 def project_device(row, local_id):
@@ -375,6 +375,10 @@ def valid_id(value):
 
 def safe_text(value):
     return isinstance(value, str) and len(value) <= 256 and all(32 <= ord(char) < 127 for char in value)
+
+
+def device_label(value):
+    return isinstance(value, str) and len(value) <= 256 and (not value or value.isprintable())
 
 
 def exact_uuid(value):
