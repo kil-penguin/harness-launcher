@@ -97,12 +97,14 @@ env | grep -q '^_HARNESS_LAUNCHER_SHELL_AUTO_ENABLED=' && {
   claude -p plan
   claude rich
 )
+# The stub captures raw launcher transport, including its Claude selector.
+# The real harness-exec/native boundary is exercised separately below.
 for expected in \
   'ARGV: <codex> <--passthrough> <exec> <task>' \
   'ARGV: <codex> <--passthrough> <-a> <never>' \
-  'ARGV: <base> <--passthrough> <--resume> <session-123>' \
-  'ARGV: <base> <--passthrough> <-p> <plan>' \
-  'ARGV: <base> <--passthrough> <rich>'; do
+  'ARGV: <claude> <base> <--passthrough> <--resume> <session-123>' \
+  'ARGV: <claude> <base> <--passthrough> <-p> <plan>' \
+  'ARGV: <claude> <base> <--passthrough> <rich>'; do
   grep -Fqx "$expected" "$ROUTE_LOG" || {
     echo "FAIL: plain command did not route through harness-auto verbatim: $expected" >&2; exit 1
   }
@@ -110,7 +112,7 @@ done
 [[ ! -s "$NATIVE_LOG" ]] || {
   echo 'FAIL: routed commands bypassed the harness' >&2; exit 1
 }
-echo 'PASS: enabled plain codex and claude route by current directory with native argv'
+echo 'PASS: enabled plain codex and claude route by current directory with raw launcher argv'
 
 (
   cd "$TMP"
@@ -162,9 +164,9 @@ echo 'PASS: plain Claude management commands use the profile-scoped native route
   claude -- mcp list
 )
 for expected in \
-  'ARGV: <base> <--passthrough> <mcp list>' \
-  'ARGV: <base> <--passthrough> <-p> <doctor>' \
-  'ARGV: <base> <--passthrough> <--> <mcp> <list>'; do
+  'ARGV: <claude> <base> <--passthrough> <mcp list>' \
+  'ARGV: <claude> <base> <--passthrough> <-p> <doctor>' \
+  'ARGV: <claude> <base> <--passthrough> <--> <mcp> <list>'; do
   grep -Fqx "$expected" "$ROUTE_LOG" || {
     echo "FAIL: Claude prompt syntax was misclassified as management: $expected" >&2
     exit 1

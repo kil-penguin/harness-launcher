@@ -50,6 +50,23 @@ def validate_codex_working_dirs(args, cwd, harness_root):
         index += 1
 
 
+def _claude_launcher_args(args):
+    """Put the raw Claude selector after only the leading outer controls."""
+    index = 0
+    if args and args[0] == "--cwd":
+        if len(args) < 2:
+            raise ResolutionError("--cwd requires a directory")
+        index = 2
+    if index < len(args):
+        if args[index] == "--isolated-session":
+            if len(args) < index + 2:
+                raise ResolutionError("--isolated-session requires a UUID")
+            index += 2
+        elif args[index] in ("--isolated", "--no-isolated"):
+            index += 1
+    return args[:index] + ["claude"] + args[index:]
+
+
 def main(argv):
     explain = False
     explicit_profile = None
@@ -84,6 +101,7 @@ def main(argv):
         selection = resolve(cwd, Path(profile_home) / "profiles", explicit_profile)
         if agent == "codex":
             validate_codex_working_dirs(args, cwd, selection.harness_root)
+        launcher_args = _claude_launcher_args(args) if agent == "claude" else [agent] + args
     except ResolutionError as exc:
         print(f"harness-auto: {exc}", file=sys.stderr)
         return 2
@@ -100,7 +118,6 @@ def main(argv):
     if not os.access(launcher, os.X_OK):
         print(f"harness-auto: missing executable: {launcher}", file=sys.stderr)
         return 2
-    launcher_args = args if agent == "claude" else [agent] + args
     os.execv(str(launcher), [str(launcher), str(selection.harness_root)] + launcher_args)
     return 2
 

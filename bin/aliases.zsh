@@ -1213,6 +1213,24 @@ _harness_launcher_run() {
   esac
   local isolated_source_run_dir="$HARNESS_RUN_DIR"
 
+  # This entry accepts raw argv. Consume one discriminator at the selector
+  # position; the session runner and isolation classifier receive canonical argv.
+  local selector_i=1
+  case "${1:-}" in
+    --isolated|--no-isolated) selector_i=2 ;;
+    --isolated-session) selector_i=3 ;;
+  esac
+  if [[ "${@[selector_i]-}" == claude ]]; then
+    local -a canonical_args=("$@")
+    canonical_args[selector_i]=()
+    set -- "${canonical_args[@]}"
+    case "${@[selector_i]-}" in
+      codex|codex-smoke|checkup|kiro|kiro-cli|codex-gateway|claude-management)
+        echo 'harness-launcher: explicit claude cannot select another runtime prefix' >&2
+        return 2 ;;
+    esac
+  fi
+
   # A bare interactive entrypoint chooses its workspace before any runtime
   # preparation, session allocation or foreground collection. Older installed
   # runtimes can omit the helper and retain the historical TUI path.
@@ -1243,6 +1261,10 @@ _harness_launcher_run() {
     --isolated|--no-isolated) mgmt_i=2 ;;
     --isolated-session) mgmt_i=3 ;;
   esac
+  if harness_claude_is_management_command "${@[mgmt_i]-}"; then
+    set -- claude-management "${@[mgmt_i,-1]}"
+    mgmt_i=1
+  fi
   if [[ "${@[mgmt_i]-}" != (codex|codex-smoke|checkup|kiro|kiro-cli|codex-gateway|claude-management) ]]; then
     for (( ; mgmt_i < $#; mgmt_i++ )); do
       [[ "${@[mgmt_i]}" == -- ]] && break
@@ -2501,6 +2523,7 @@ _harness_launcher_complete() {
     'dontAsk:Auto-approve most actions'
     '--chrome:Enable Claude in Chrome integration'
     '--no-chrome:Disable Claude in Chrome integration'
+    'claude:Claude Code native (explicit selector; existing presets supported)'
     "codex:Codex CLI native (272K default · 1m opt-in · profiles${codex_surface_desc}/fork/safety)"
     'codex-smoke:Send one bounded metadata-only Codex verification event'
     'checkup:Headless read-only /checkup prompt-audit at the harness root'
