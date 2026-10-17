@@ -87,6 +87,24 @@ class LifecycleTest(unittest.TestCase):
             if device==REMOTE:self.assertTrue(all(r[2].get('X-Herdr-Machine')=='1' for r in self.posts()))
             record=self.db().read(rows[0]['intent']);self.assertEqual(record['create_receipt'],RECEIPT);self.assertNotIn('cwd',record)
             self.calls.clear()
+    def test_existing_common_0755_parents_keep_modes_and_private_receipts(self):
+        (self.home/'.local/state').mkdir(parents=True)
+        for path in (self.home/'.local',self.home/'.local/state'):path.chmod(0o755)
+        code,rows=self.create();self.assertEqual(code,0,rows)
+        for path in (self.home/'.local',self.home/'.local/state'):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode),0o755)
+        for path in (self.home/'.local/state/harness-herdr-web',self.db().root.parent,self.db().root):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode),0o700)
+        self.assertEqual(self.db().read(rows[0]['intent'])['create_receipt'],RECEIPT)
+    def test_unsafe_common_parents_and_nonprivate_receipt_dirs_stop_before_http(self):
+        for relative,mode in (('.local',0o775),('.local/state',0o777),('.local/state/harness-herdr-web',0o755)):
+            with self.subTest(relative=relative):
+                path=self.home/relative;path.mkdir(parents=True,exist_ok=True);path.chmod(mode)
+                code,rows=self.create();self.assertEqual(code,1,rows);self.assertEqual(self.posts(),[])
+                path.chmod(0o700)
+        path=self.home/'.local/state';moved=path.with_name('owned-state');path.rename(moved);path.symlink_to(moved,target_is_directory=True)
+        code,rows=self.create();self.assertEqual(code,1,rows);self.assertEqual(self.posts(),[])
+        path.unlink();moved.rename(path)
     def test_completed_receipt_authorizes_fresh_interrupt_and_exact_singleton_close(self):
         code,rows=self.create();self.assertEqual(code,0,rows);source=rows[0]['intent'];original=self.db().read(source)
         for command,method in [('owned-interrupt','lifecycle.guarded_interrupt.v1'),('owned-close','lifecycle.guarded_close.v1')]:

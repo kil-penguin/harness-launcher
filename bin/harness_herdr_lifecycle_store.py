@@ -100,7 +100,11 @@ class _Files(private.Store):
             for part in self.home.parts[1:]:fds.append(os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fds[-1]))
             info=os.fstat(fds[-1])
             if info.st_uid!=self.uid or info.st_mode&0o022:fail()
-            for part in ('.local','state','harness-herdr-web','lifecycle-receipts','v1'):fds.append(self._private_dir(fds[-1],part))
+            for part in ('.local','state'):
+                try:fd=self._dir(part,fds[-1])
+                except FileNotFoundError:fd=self._private_dir(fds[-1],part)
+                fds.append(fd)
+            for part in ('harness-herdr-web','lifecycle-receipts','v1'):fds.append(self._private_dir(fds[-1],part))
             yield fds[-1]
         finally:
             for fd in reversed(fds):os.close(fd)

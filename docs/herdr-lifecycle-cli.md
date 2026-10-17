@@ -31,7 +31,11 @@ a restart never authorizes adoption of another resource or process.
 
 Lifecycle records are separate from input, UI-answer and managed-launch state:
 `~/.local/state/harness-herdr-web/lifecycle-receipts/v1/`.
-Directories are owned 0700; files and per-intent advisory locks are owned 0600.
+The private `harness-herdr-web`, `lifecycle-receipts` and `v1` directories are
+owned 0700; files and per-intent advisory locks are owned 0600. Existing common
+`.local` and `state` parents may retain owned, non-group/world-writable modes
+such as 0755. Missing parents are created 0700. Symlinks and unsafe ownership or
+write permissions are refused; existing parent modes are never changed.
 Records contain private owner keys and admission tickets: never print or share
 these files. They contain no cwd or action body. Keep them until the operation
 has been inspected and any required dependent action has finished.
