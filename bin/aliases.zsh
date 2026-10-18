@@ -1262,9 +1262,21 @@ except (AssertionError,OSError,ValueError,TypeError):
 PYOMP
 }
 
+_harness_launcher_omp_native() (
+  local run_dir="$1" root="$HARNESS_OMP_ROOT" native_bin="$HARNESS_OMP_BIN"
+  shift
+  cd "$run_dir" || return 2
+  umask 077
+  /usr/bin/env -i HOME="$root/home" PATH=/usr/bin:/bin LANG=C LC_ALL=C \
+    TMPDIR="$root/tmp" XDG_CACHE_HOME="$root/cache" XDG_CONFIG_HOME="$root/config" \
+    XDG_STATE_HOME="$root/state" XDG_DATA_HOME="$root/data" \
+    PI_CODING_AGENT_DIR="$root/agent" PI_CODING_AGENT_SESSION_DIR="$root/history" \
+    PI_NATIVES_DIR="$root/native-cache" TERM=xterm-256color "$native_bin" "$@"
+)
+
 _harness_launcher_run_omp() (
   _harness_launcher_omp_validate || return 2
-  local root="$HARNESS_OMP_ROOT" native_bin="$HARNESS_OMP_BIN" lease_fd=""
+  local root="$HARNESS_OMP_ROOT" lease_fd=""
   if [[ "${1:-}" != (--version|--help) ]]; then
     # Retain one normal native-home owner for this namespace, in addition to
     # any existing isolated-workspace lease held by the outer runner.
@@ -1279,13 +1291,146 @@ _harness_launcher_run_omp() (
   # Nonpublic management owns the prepared native home, not a workspace.
   local run_dir="${HARNESS_RUN_DIR:-$root/cwd}"
   [[ "${1:-}" == (login|models) ]] && run_dir="$root/cwd"
-  cd "$run_dir" || return 2
-  umask 077
-  /usr/bin/env -i HOME="$root/home" PATH=/usr/bin:/bin LANG=C LC_ALL=C \
-    TMPDIR="$root/tmp" XDG_CACHE_HOME="$root/cache" XDG_CONFIG_HOME="$root/config" \
-    XDG_STATE_HOME="$root/state" XDG_DATA_HOME="$root/data" \
-    PI_CODING_AGENT_DIR="$root/agent" PI_CODING_AGENT_SESSION_DIR="$root/history" \
-    PI_NATIVES_DIR="$root/native-cache" TERM=xterm-256color "$native_bin" "$@"
+  _harness_launcher_omp_native "$run_dir" "$@"
+)
+
+# Closed metadata via a private pipe, never eval/source a receipt or prompt.
+# Variables are local to the continuation subshell below (zsh dynamic scope).
+_harness_launcher_omp_continuation_metadata() {
+  "$continuation_python" -I -S -B - "$continuation_helper" "$1" "$continuation_state" \
+    "${config_root:A}" "$continuation_w" "$continuation_h" "${2:--}" "${3:--}" "${4:-UNKNOWN}" <<'PYBUILD' |
+import importlib.util,json,sys
+from pathlib import Path
+try:
+    helper,mode,state,source,w,h,expected,nonce,terminal=sys.argv[1:]
+    spec=importlib.util.spec_from_file_location('_omp_continuation_bridge',helper)
+    m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+    consumer=str(Path(helper).with_name('aliases.zsh'))
+    if expected=='-' and nonce=='-':
+        _,raw,row,_=m.load_record(state,source,h,consumer)
+        expected=m.p.digest(raw);nonce=row['lifecycle_nonce']
+    value={'schema':'omp-continuation-operation/v1','mode':mode,'state_root':state,'source_root':source,
+           'launcher_session_id':w,'consumer':consumer,'handle':h,'expected_sha256':expected,
+           'lifecycle_nonce':nonce,'terminal_status':None if terminal=='UNKNOWN' else int(terminal)}
+    raw=m.p.canonical(value);m.require(len(raw)<=16384);sys.stdout.buffer.write(raw)
+except Exception:
+    print('harness-launcher: OMP_CONTINUATION_UNBOUND',file=sys.stderr);raise SystemExit(2)
+PYBUILD
+    "$continuation_python" -I -S -B "$continuation_helper" --input-fd 0 |
+    "$continuation_python" -I -S -B -c '
+import json,re,sys
+try:
+    raw=sys.stdin.buffer.read(16385);assert len(raw)<=16384
+    def pairs(items):
+        value={}
+        for key,item in items:
+            assert key not in value;value[key]=item
+        return value
+    row=json.loads(raw,object_pairs_hook=pairs,parse_constant=lambda _:None)
+    assert set(row)==set("schema handle status launcher_session_id workspace_root session_dir native_path record_sha256 lifecycle_nonce".split())
+    assert row["schema"]=="omp-continuation-selection/v1"
+    assert row["status"] in ("PENDING","READY","IN_FLIGHT","BLOCKED")
+    assert re.fullmatch("[0-9a-f]{32}",row["handle"]) and re.fullmatch("[0-9a-f]{32}",row["lifecycle_nonce"])
+    assert re.fullmatch("[0-9a-f]{64}",row["record_sha256"])
+    assert re.fullmatch("[0-9a-fA-F-]{36}",row["launcher_session_id"])
+    for key in ("workspace_root","session_dir","native_path"):
+        value=row[key]
+        if key=="native_path" and value is None:continue
+        assert isinstance(value,str) and value.startswith("/") and not any(ord(c)<32 or ord(c)==127 for c in value)
+    for key in ("status","handle","launcher_session_id","workspace_root","session_dir","native_path","record_sha256","lifecycle_nonce"):
+        print(row[key] if row[key] is not None else "-")
+except Exception:
+    print("harness-launcher: OMP_CONTINUATION_UNBOUND",file=sys.stderr);raise SystemExit(2)
+'
+}
+
+_harness_launcher_omp_continuation() (
+  setopt localoptions pipefail
+  local continuation_w="$1" continuation_mode="$2"; shift 2
+  local continuation_h="${continuation_w//-/}" continuation_state="${HARNESS_SESSION_STATE_HOME:-}"
+  continuation_h="${(L)continuation_h}"
+  [[ "$continuation_h" =~ '^[0-9a-f]{32}$' && "$continuation_state" == /* ]] || return 2
+  if [[ "$continuation_mode" == --session-resume ]]; then
+    [[ "${1:-}" == "$continuation_h" ]] || return 2
+    shift
+  fi
+  local -a native_options=() native_prompt=() fields=()
+  local LC_ALL=C value
+  while (( $# )) && [[ "$1" != -- ]]; do
+    [[ ${#1} -le 65536 ]] || return 2
+    native_options+=("$1"); shift
+  done
+  [[ "${1:-}" == -- && ${#native_options} -le 128 ]] || return 2
+  shift
+  (( $# <= 1 )) || return 2
+  if (( $# )); then [[ ${#1} -le 65536 ]] || return 2; native_prompt=("$1"); fi
+  _harness_launcher_omp_check_args "${native_options[@]}" -- "${native_prompt[@]}" || return 2
+  local continuation_python continuation_helper="$_HARNESS_LAUNCHER_BIN/harness_omp_continuation.py"
+  continuation_python="$(harness_python3_resolve)" || return 2
+  [[ -f "$continuation_helper" && ! -L "$continuation_helper" ]] || return 2
+  # Verify the whole implementing sibling closure before importing metadata
+  # code. The legacy selector intentionally keeps its preexisting closure.
+  "$continuation_python" -I -S -B "$_HARNESS_LAUNCHER_BIN/harness_omp_projection.py" \
+    select-continuation-source "${config_root:A}" "$HOME/.config/harness-launcher/profiles" \
+    "${config_root:A}" "$_HARNESS_LAUNCHER_BIN/aliases.zsh" >/dev/null || return 2
+  local -a public_request=(omp "$continuation_mode")
+  [[ "$continuation_mode" != --session-resume ]] || public_request+=("$continuation_h")
+  public_request+=("${native_options[@]}" -- "${native_prompt[@]}")
+  "$continuation_python" -I -S -B - "$continuation_helper" "${public_request[@]}" <<'PYREQUEST' || return 2
+import importlib.util,sys
+try:
+    spec=importlib.util.spec_from_file_location('_omp_continuation_request',sys.argv[1])
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    assert module.request(sys.argv[2:]) is not None
+except Exception:
+    print('harness-launcher: OMP_CONTINUATION_UNBOUND',file=sys.stderr);raise SystemExit(2)
+PYREQUEST
+  local HARNESS_SESSION_LEASE_FD="" namespace_fd="" selected="" native_rc=2 metadata_rc=2
+  local expected_sha="" own_nonce="" retained_c="" retained_s="" retained_p=""
+  _harness_launcher_isolated_lease_acquire "$continuation_w" || return 2
+  {
+    _harness_launcher_omp_validate || return 2
+    umask 077
+    [[ ! -L "$HARNESS_OMP_ROOT/.launcher.lock" ]] || return 2
+    : >> "$HARNESS_OMP_ROOT/.launcher.lock" || return 2
+    zmodload zsh/system || return 2
+    zsystem flock -t 0 -f namespace_fd "$HARNESS_OMP_ROOT/.launcher.lock" || {
+      echo 'harness-launcher: OMP_CONTINUATION_BUSY' >&2; return 2
+    }
+    _harness_launcher_omp_validate || return 2
+    local operation=NEW_PREPARE
+    [[ "$continuation_mode" == --session-resume ]] && operation=RESUME_ADMIT
+    selected="$(_harness_launcher_omp_continuation_metadata "$operation")" || return 2
+    fields=("${(@f)selected}")
+    [[ ${#fields} -eq 8 && "$fields[2]" == "$continuation_h" && "$fields[3]" == "$continuation_w" ]] || return 2
+    retained_c="$fields[4]"; retained_s="$fields[5]"; retained_p="$fields[6]"
+    expected_sha="$fields[7]"; own_nonce="$fields[8]"
+    # Repeat authority/origin/header checks after IN_FLIGHT and immediately
+    # before the one foreground call. No generic create/GC/owner preparation.
+    _harness_launcher_omp_continuation_metadata RESOLVE "$expected_sha" "$own_nonce" >/dev/null || return 2
+    if [[ "$continuation_mode" == --session-new ]]; then
+      _harness_launcher_omp_native "$retained_c" "${native_options[@]}" --session-dir "$retained_s" -- "${native_prompt[@]}"
+    else
+      [[ "$retained_p" == /* ]] || return 2
+      _harness_launcher_omp_native "$retained_c" "${native_options[@]}" --session-dir "$retained_s" --resume "$retained_p" -- "${native_prompt[@]}"
+    fi
+    native_rc=$?
+    selected="$(_harness_launcher_omp_continuation_metadata FINALIZE "$expected_sha" "$own_nonce" "$native_rc")"
+    metadata_rc=$?
+    (( native_rc == 0 )) || return "$native_rc"
+    (( metadata_rc == 0 )) || return 2
+    fields=("${(@f)selected}")
+    [[ ${#fields} -eq 8 && "$fields[1]" == READY && "$fields[2]" == "$continuation_h" ]] || return 2
+    print -ru2 -- "harness-launcher: OMP_CONTINUATION_HANDLE=$continuation_h"
+    return 0
+  } always {
+    [[ -z "$namespace_fd" ]] || zsystem flock -u "$namespace_fd" 2>/dev/null
+    if [[ "$continuation_mode" == --session-new ]]; then
+      _harness_launcher_isolated_finish "$continuation_w" "" "$HARNESS_SESSION_LEASE_FD"
+    else
+      [[ -z "$HARNESS_SESSION_LEASE_FD" ]] || zsystem flock -u "$HARNESS_SESSION_LEASE_FD" 2>/dev/null
+    fi
+  }
 )
 
 # _harness_launcher_run <harness-dir> [args...]
@@ -1382,6 +1527,16 @@ _harness_launcher_run() {
     omp_selected=true
     local -a omp_native_args=()
     (( $# <= selector_i )) || omp_native_args=("${@[selector_i+1,-1]}")
+    if [[ "${omp_native_args[1]-}" == (--session-new|--session-resume) ]]; then
+      # Entry alone supplies this exact internal transport after origin/store
+      # verification. Raw public outer controls are refused by Entry pre-begin.
+      [[ -z "$isolated_source_run_dir" && "$1" == --isolated-session && "$selector_i" == 3 ]] || {
+        echo 'harness-launcher: OMP_CONTINUATION_UNBOUND' >&2; return 2
+      }
+      _harness_launcher_omp_projection_select || return 2
+      _harness_launcher_omp_continuation "$2" "${omp_native_args[@]}"
+      return $?
+    fi
     _harness_launcher_omp_check_args "${omp_native_args[@]}" || return 2
     _harness_launcher_omp_projection_select || return 2
     if [[ "${omp_native_args[1]-}" == (--version|--help|login|models) ]]; then
