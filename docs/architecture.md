@@ -11,7 +11,8 @@
             └─ defines <prefix>() and completion
                  ├─ Claude Code
                  ├─ Codex CLI  → prepare .harness/codex
-                 └─ Kiro CLI   → prepare .harness/kiro
+                 ├─ Kiro CLI   → prepare .harness/kiro
+                 └─ Oh My Pi  → separately prepared pinned native home
 ```
 
 External orchestrators use the same runner through a registered executable profile or `harness-exec` rather than depending on shell startup:
@@ -70,12 +71,13 @@ ex <mode>                  direct Claude Code
 ex claude <mode>           direct Claude Code, explicit selector
 ex fable                   direct Claude Code, fable alias + high effort
 ex codex <profile>         native Codex CLI
+ex omp [native args]      fresh Oh My Pi session (explicit, pinned)
 ex kiro-cli <mode>         native Kiro CLI
 ex kiro <mode>             Claude Code through a Kiro gateway
 ex codex-gateway <mode>    Claude Code through a Codex gateway
 ```
 
-Runtime-specific arguments remain arrays until execution. The launcher passes unknown arguments through to the selected CLI.
+Runtime-specific arguments remain arrays until execution. The launcher passes unknown arguments through to the selected CLI, except for the initially bounded OMP adapter described below.
 
 An explicit `claude` is consumed once at the runtime-selector position, after
 optional leading `--cwd <dir>` and workspace controls. `ex claude claude -- text`
@@ -107,6 +109,76 @@ HARNESS_CODEX_BIN
 Kiro follows the same explicit-override pattern through `HARNESS_KIRO_BIN`, then `kiro-cli` from `PATH`.
 
 This order matters on macOS because an app-bundled CLI or a version-manager shim can differ from the executable expected by the user. Verify binary selection from the same login shell that loads the launcher.
+
+## OMP entry and prepared namespace
+
+OMP is an explicit selector after the optional leading `--cwd <dir>` and one
+workspace control (`--isolated`, `--no-isolated`, or `--isolated-session <uuid>`).
+The dispatcher consumes it once: `ex omp omp -- text` passes `omp -- text` to
+OMP. Option values, empty arguments and tokens after `--` remain literal.
+`claude omp` and `omp claude` are refused. This does not add OMP to the TUI,
+change the default runtime, or add an automatic agent-selection alias.
+
+Trusted `config/launcher.env` must explicitly bind all three values:
+
+```bash
+HARNESS_OMP_BIN="/absolute/path/to/verified/omp"
+HARNESS_OMP_SHA256="<full lowercase SHA-256 of that executable>"
+HARNESS_OMP_ROOT="/absolute/path/to/prepared/owned/omp-state"
+```
+
+There is no executable lookup, fallback runtime, download, namespace creation,
+or projection from another runtime's configuration. Before configuring the
+route, an owner must separately prepare a canonical, non-symlink, current-user
+namespace. Its root and `home`, `agent`, `history`, `cwd`, `tmp`, `cache`,
+`config`, `state`, `data`, and `native-cache` directories must have mode `0700`.
+The pinned binary must be a current-user regular file with one link and mode
+`0555`. A regular, single-link, current-user `0600` `.owner.json` must record
+`schema: "p0-normal-omp-owner-v1"`, the absolute root as `prefix`, the exact
+`binary`, its full `asset_sha256`, and an `identity` object recording the
+preparer. This marker is ownership metadata, not native account authentication.
+Invalid paths, modes, marker or full digest fail closed before workspace
+allocation. Canonicalize paths when preparing them; symlink spellings fail.
+
+The outgoing native environment contains exactly `HOME=<root>/home`,
+`PATH=/usr/bin:/bin`, `LANG=C`, `LC_ALL=C`, `TMPDIR=<root>/tmp`, the four
+`XDG_{CACHE,CONFIG,STATE,DATA}_HOME` values under the matching root leaves,
+`PI_CODING_AGENT_DIR=<root>/agent`,
+`PI_CODING_AGENT_SESSION_DIR=<root>/history`,
+`PI_NATIVES_DIR=<root>/native-cache`, and `TERM=xterm-256color`. Ambient API
+keys, Node options, other runtime homes and harness identity variables are not
+forwarded. Native/platform startup may subsequently change its own process
+environment; that is distinct from the launcher's outgoing contract. No auth,
+settings or session history is copied or adopted from Claude, Codex or a prior
+native profile. A root-local kernel lease serializes fresh OMP use of the
+native home; existing isolated workspace leases and finalization also apply.
+The default cwd is `<root>/cwd`; an explicit outer cwd is resolved through the
+existing workspace-owner boundary. OMP homes are a deliberate exception to
+project-local generated runtime homes. This is a trusted application with
+separate logical state, not a kernel sandbox or a filesystem/network
+containment guarantee.
+
+Sole native `--version` and `--help` return through the pinned route before
+session/history, model or provider preparation, including with outer workspace
+controls. Normal fresh sessions preserve native exit status. The initial
+adapter accepts positional prompt tokens and `--`; value options `--model`,
+`--smol`, `--slow`, `--plan`, `--provider`, `--models`, `--thinking`,
+`--service-tier`, `--tools`, `--skills`, `--max-time` (including `--name=value`);
+and booleans `-p`, `--print`, `--no-tools`, `--no-lsp`, `--no-pty`,
+`--no-extensions`, `--no-skills`, `--no-rules`, `--no-title`, `--hide-thinking`,
+and `--no-prewalk`. Separate option values must be present and not start with
+`-`; use the equals form for those values. Native management subcommands and
+other flags, including state/auth/path overrides and restore/resume/fork,
+remain refused until their native transport is supported. This temporary
+restriction does not claim full CLI, continuation or cross-runtime history
+support. Literal text after `--` is not scanned as a launcher command.
+
+Run the fake-only routing regression with `zsh test/test-omp-routing.sh`.
+The existing `test/run-all.sh` also discovers it through `test/test-*.sh`.
+The routing fixture checks the outgoing environment separately from its
+interpreter's startup-added environment. Source implementation and
+fake proof do not activate an installed launcher or prove interactive OMP,
+account authentication, provider calls, or full session restoration.
 
 ## Generated runtime homes
 

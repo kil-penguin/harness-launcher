@@ -1166,6 +1166,97 @@ _harness_launcher_codex_history_begin() {
   return 0
 }
 
+# The initial OMP route is fresh-session only. Parse option values lexically;
+# never reinterpret a value or tokens after -- as a launcher control.
+_harness_launcher_omp_check_args() {
+  case "${1:-}" in
+    claude|codex|kiro|kiro-cli|codex-gateway|checkup|claude-management)
+      echo 'harness-launcher: explicit omp cannot select another runtime' >&2; return 2 ;;
+    --version|--help)
+      [[ $# == 1 ]] && return 0
+      echo 'harness-launcher: OMP public management takes no additional arguments' >&2; return 2 ;;
+    auth|auth-broker|auth-gateway|login|token|session|gc|config|update|install|plugin|setup|worktree|join|share|stream|clip|ps|shell|acp|agents|anonymize|bench|browser-relay|cleanse|collab|commit|completions|compress|dry-balance|find|gallery|git|grep|grievances|if-bench|images|models|play|predict|read|render|say|search|skill|ssh|stats|tiny-models|toks|ttsr|usage|resume|continue|fork)
+      echo 'harness-launcher: this OMP entry currently supports fresh sessions and public version/help only' >&2; return 2 ;;
+  esac
+  while (( $# )); do
+    case "$1" in
+      --) return 0 ;;
+      --model|--smol|--slow|--plan|--provider|--models|--thinking|--service-tier|--tools|--skills|--max-time)
+        [[ $# -ge 2 && "$2" != -* ]] || {
+          echo 'harness-launcher: OMP option requires a literal value' >&2; return 2
+        }
+        shift 2 ;;
+      --model=*|--smol=*|--slow=*|--plan=*|--provider=*|--models=*|--thinking=*|--service-tier=*|--tools=*|--skills=*|--max-time=*) shift ;;
+      -p|--print|--no-tools|--no-lsp|--no-pty|--no-extensions|--no-skills|--no-rules|--no-title|--hide-thinking|--no-prewalk) shift ;;
+      -*)
+        echo 'harness-launcher: OMP state, auth, restore and unbound native options are not enabled on this entry' >&2; return 2 ;;
+      *) shift ;;
+    esac
+  done
+}
+
+# Only trusted launcher.env selects the exact executable, digest and prepared
+# namespace. No PATH fallback, generated config projection or auth inheritance.
+_harness_launcher_omp_validate() {
+  local python
+  python="$(harness_python3_resolve)" || return 2
+  "$python" -I -S -B - "$HARNESS_OMP_BIN" "$HARNESS_OMP_ROOT" "$HARNESS_OMP_SHA256" <<'PYOMP'
+import hashlib,json,os,re,stat,sys
+from pathlib import Path
+try:
+    binary,root=map(Path,sys.argv[1:3]);expected=sys.argv[3];uid=os.getuid()
+    assert binary.is_absolute() and root.is_absolute() and re.fullmatch('[0-9a-f]{64}',expected)
+    for path in (binary,root):
+        assert path==path.resolve()
+        for p in (path,*path.parents):assert not p.is_symlink()
+    s=binary.lstat()
+    assert stat.S_ISREG(s.st_mode) and s.st_uid==uid and s.st_nlink==1 and stat.S_IMODE(s.st_mode)==0o555
+    h=hashlib.sha256()
+    with binary.open('rb') as f:
+        for b in iter(lambda:f.read(1048576),b''):h.update(b)
+    assert h.hexdigest()==expected
+    after=binary.lstat()
+    assert (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns)==(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns)
+    for name in ['', 'home','agent','history','cwd','tmp','cache','config','state','data','native-cache']:
+        p=root/name;s=p.lstat()
+        assert not p.is_symlink() and stat.S_ISDIR(s.st_mode) and s.st_uid==uid and stat.S_IMODE(s.st_mode)==0o700
+    lock=root/'.launcher.lock'
+    if lock.exists() or lock.is_symlink():
+        s=lock.lstat()
+        assert not lock.is_symlink() and stat.S_ISREG(s.st_mode) and s.st_uid==uid and s.st_nlink==1 and stat.S_IMODE(s.st_mode)==0o600
+    marker=root/'.owner.json';s=marker.lstat()
+    assert not marker.is_symlink() and stat.S_ISREG(s.st_mode) and s.st_uid==uid and s.st_nlink==1 and stat.S_IMODE(s.st_mode)==0o600
+    owner=json.loads(marker.read_bytes())
+    assert owner.get('schema')=='p0-normal-omp-owner-v1' and owner.get('prefix')==str(root) and owner.get('binary')==str(binary) and owner.get('asset_sha256')==expected and isinstance(owner.get('identity'),dict)
+except (AssertionError,OSError,ValueError,TypeError):
+    print('harness-launcher: OMP executable pin or prepared namespace is invalid',file=sys.stderr)
+    raise SystemExit(2)
+PYOMP
+}
+
+_harness_launcher_run_omp() (
+  _harness_launcher_omp_validate || return 2
+  local root="$HARNESS_OMP_ROOT" native_bin="$HARNESS_OMP_BIN" lease_fd=""
+  if [[ "${1:-}" != (--version|--help) ]]; then
+    # Retain one normal native-home owner for this namespace, in addition to
+    # any existing isolated-workspace lease held by the outer runner.
+    [[ ! -L "$root/.launcher.lock" ]] || return 2
+    umask 077
+    : >> "$root/.launcher.lock" || return 2
+    zmodload zsh/system || return 2
+    zsystem flock -t 0 -f lease_fd "$root/.launcher.lock" || {
+      echo 'harness-launcher: OMP namespace is already active' >&2; return 2
+    }
+  fi
+  cd "${HARNESS_RUN_DIR:-$root/cwd}" || return 2
+  umask 077
+  /usr/bin/env -i HOME="$root/home" PATH=/usr/bin:/bin LANG=C LC_ALL=C \
+    TMPDIR="$root/tmp" XDG_CACHE_HOME="$root/cache" XDG_CONFIG_HOME="$root/config" \
+    XDG_STATE_HOME="$root/state" XDG_DATA_HOME="$root/data" \
+    PI_CODING_AGENT_DIR="$root/agent" PI_CODING_AGENT_SESSION_DIR="$root/history" \
+    PI_NATIVES_DIR="$root/native-cache" TERM=xterm-256color "$native_bin" "$@"
+)
+
 # _harness_launcher_run <harness-dir> [args...]
 #   Shared implementation for every registered profile function.
 _harness_launcher_run() {
@@ -1195,6 +1286,7 @@ _harness_launcher_run() {
   local HARNESS_SESSION_ID="" HARNESS_SOURCE_ROOT="" HARNESS_SESSION_ROOT=""
   local HARNESS_NATIVE_HISTORY_LEASE_FD=""
   local HARNESS_NATIVE_HISTORY_LEASE_ADOPTED=0
+  local HARNESS_OMP_BIN="" HARNESS_OMP_ROOT="" HARNESS_OMP_SHA256=""
   {
   if [[ -n "${HARNESS_CODEX_HISTORY_LEASE_FD:-}" ]]; then
     _harness_launcher_codex_history_lease_adopt "${HARNESS_CODEX_HISTORY_NATIVE_ID:-}" || {
@@ -1225,7 +1317,7 @@ _harness_launcher_run() {
     canonical_args[selector_i]=()
     set -- "${canonical_args[@]}"
     case "${@[selector_i]-}" in
-      codex|codex-smoke|checkup|kiro|kiro-cli|codex-gateway|claude-management)
+      codex|codex-smoke|checkup|kiro|kiro-cli|codex-gateway|claude-management|omp)
         echo 'harness-launcher: explicit claude cannot select another runtime prefix' >&2
         return 2 ;;
     esac
@@ -1252,6 +1344,21 @@ _harness_launcher_run() {
   mcp_surface_policy="$(harness_mcp_surface_policy_resolve "$HARNESS_MCP_SURFACE_POLICY")" || return $?
   export HARNESS_PREFIX
 
+  # Keep the OMP discriminator through workspace normalization. Public native
+  # management returns before session/history preparation, even with controls.
+  local omp_selected=false
+  if [[ "${@[selector_i]-}" == omp ]]; then
+    omp_selected=true
+    local -a omp_native_args=()
+    (( $# <= selector_i )) || omp_native_args=("${@[selector_i+1,-1]}")
+    _harness_launcher_omp_check_args "${omp_native_args[@]}" || return 2
+    if [[ "${omp_native_args[1]-}" == (--version|--help) ]]; then
+      _harness_launcher_run_omp "${omp_native_args[@]}"
+      return $?
+    fi
+    _harness_launcher_omp_validate || return 2
+  fi
+
   # SDK hosts run diagnostics such as `auth status` through the same argv
   # prefix (`base --passthrough auth status`); a management subcommand right
   # after the marker runs natively. Only for direct Claude: other runtimes and
@@ -1265,7 +1372,7 @@ _harness_launcher_run() {
     set -- claude-management "${@[mgmt_i,-1]}"
     mgmt_i=1
   fi
-  if [[ "${@[mgmt_i]-}" != (codex|codex-smoke|checkup|kiro|kiro-cli|codex-gateway|claude-management) ]]; then
+  if [[ "${@[mgmt_i]-}" != (codex|codex-smoke|checkup|kiro|kiro-cli|codex-gateway|claude-management|omp) ]]; then
     for (( ; mgmt_i < $#; mgmt_i++ )); do
       [[ "${@[mgmt_i]}" == -- ]] && break
       if [[ "${@[mgmt_i]}" == --passthrough ]]; then
@@ -1469,7 +1576,9 @@ _harness_launcher_run() {
     # caller's run directory (harness-exec passes --cwd), not the session root.
     _harness_launcher_isolated_record_run_dir
     if $created_isolated_session; then
-      if [[ "${1:-}" == codex ]]; then
+      if $omp_selected; then
+        echo "harness-launcher: isolated session $HARNESS_SESSION_ID; OMP continuation is not enabled on this entry" >&2
+      elif [[ "${1:-}" == codex ]]; then
         echo "harness-launcher: isolated session $HARNESS_SESSION_ID; continue: ${HARNESS_PREFIX} --isolated-session $HARNESS_SESSION_ID codex resume" >&2
       else
         echo "harness-launcher: isolated session $HARNESS_SESSION_ID; continue: ${HARNESS_PREFIX} --isolated-session $HARNESS_SESSION_ID resume" >&2
@@ -1527,6 +1636,12 @@ _harness_launcher_run_session() {
 
   # Optional provider prefix (must be first arg)
   case "${1:-}" in
+    omp)
+      shift
+      if [[ -n "$isolated_session_id" ]]; then _harness_launcher_isolated_heartbeat "$isolated_session_id" & isolated_heartbeat_pid=$!; fi
+      _harness_launcher_run_omp "$@"
+      return $?
+      ;;
     kiro)
       provider_name="kiro"
       local _env_file="$config_root/config/.local/kiro-gateway.env"
