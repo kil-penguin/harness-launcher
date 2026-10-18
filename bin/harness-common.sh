@@ -349,6 +349,12 @@ harness_session_isolation_default_route() {
   fi
 
   case "$1" in
+    # OMP argv is validated by its own fresh-session adapter. Do not scan its
+    # prompt/model values with Claude's continuation grammar.
+    omp)
+      printf '%s\n' isolate
+      return 0
+      ;;
     --isolated|--no-isolated|--isolated-session)
       printf '%s\n' invalid
       return 0
