@@ -1201,8 +1201,30 @@ _harness_launcher_omp_check_args() {
   done
 }
 
-# Only trusted launcher.env selects the exact executable, digest and prepared
-# namespace. No PATH fallback, generated config projection or auth inheritance.
+# The enrollment selector retains trusted launcher.env for never-enrolled
+# profiles; enrolled profiles receive only the validated typed projection.
+_harness_launcher_omp_projection_select() {
+  local python selection
+  local -a fields
+  [[ -f "$_HARNESS_LAUNCHER_BIN/harness_omp_projection.py" && ! -L "$_HARNESS_LAUNCHER_BIN/harness_omp_projection.py" ]] || {
+    echo 'harness-launcher: OMP_PROVENANCE_UNBOUND' >&2; return 2
+  }
+  python="$(harness_python3_resolve)" || return 2
+  selection="$("$python" -I -S -B "$_HARNESS_LAUNCHER_BIN/harness_omp_projection.py" \
+    select "$HARNESS_PREFIX" "${config_root:A}" "$_HARNESS_LAUNCHER_BIN/aliases.zsh")" || return 2
+  fields=("${(@f)selection}")
+  if [[ ${#fields} -eq 1 && "$fields[1]" == NEVER_ENROLLED ]]; then
+    return 0
+  fi
+  [[ ${#fields} -eq 4 && "$fields[1]" == ENROLLED ]] || {
+    echo 'harness-launcher: OMP_PROJECTION_INVALID' >&2; return 2
+  }
+  HARNESS_OMP_BIN="$fields[2]"
+  HARNESS_OMP_ROOT="$fields[3]"
+  HARNESS_OMP_SHA256="$fields[4]"
+}
+
+# No PATH fallback or auth inheritance. Both input lanes retain this validator.
 _harness_launcher_omp_validate() {
   local python
   python="$(harness_python3_resolve)" || return 2
@@ -1361,6 +1383,7 @@ _harness_launcher_run() {
     local -a omp_native_args=()
     (( $# <= selector_i )) || omp_native_args=("${@[selector_i+1,-1]}")
     _harness_launcher_omp_check_args "${omp_native_args[@]}" || return 2
+    _harness_launcher_omp_projection_select || return 2
     if [[ "${omp_native_args[1]-}" == (--version|--help|login|models) ]]; then
       _harness_launcher_run_omp "${omp_native_args[@]}"
       return $?

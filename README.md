@@ -267,7 +267,16 @@ listing may refresh provider catalogs or credentials before filtering. Neither
 command proves a model response. Restore/resume/fork, other native management,
 and unbound native flags remain refused; this is temporary bounded support, not
 complete OMP CLI compatibility.
+
+Before deploying the typed selector, the trusted configuration operator must
+prepare its complete enrollment index. Never-enrolled profiles retain the
+existing three `launcher.env` values. Explicitly enrolled profiles use only the
+host/profile-bound typed projection; missing, expired, blocked or revoked data
+stops OMP before native execution, with no fallback to the old values. Claude
+and Codex do not depend on this index. This is local configuration data under
+the existing trusted operator boundary, not an account or provider grant.
 See [OMP entry and prepared namespace](docs/architecture.md#omp-entry-and-prepared-namespace)
+and [typed host/profile enrollment](docs/architecture.md#typed-omp-hostprofile-enrollment)
 for the exact boundary and supported options.
 
 This is the supported command override for Orca's built-in Claude, Codex, and Kiro agent entries. It does not infer a profile from repository names or remotes; the worktree must live below its registered harness boundary.

@@ -31,6 +31,19 @@ with tempfile.TemporaryDirectory(prefix='omp-routing-') as tmp:
         p=tools/name;p.write_text('#!/bin/sh\nexit 97\n');p.chmod(0o700)
     env={'HOME':str(home),'PATH':str(tools)+':/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','TERM':'dumb','TMPDIR':str(root),'HARNESS_CLAUDE_PLUGIN_MIRROR':'0','PYTHONDONTWRITEBYTECODE':'1','OPENAI_API_KEY':'fixture-secret-must-not-leak','ANTHROPIC_API_KEY':'fixture-secret-must-not-leak','NODE_OPTIONS':'fixture-must-not-leak','HARNESS_SESSION_HEARTBEAT_SECONDS':'0.05','HARNESS_POST_EDIT_CODEX_SYNC':'0','HARNESS_POST_COMMIT_CODEX_SYNC':'0'}
     state=root/'sessions';env['HARNESS_SESSION_STATE_HOME']=str(state)
+    # The new selector is activated only after first-rollout preparation. Keep
+    # this legacy-routing fixture explicitly never-enrolled in its own HOME.
+    import importlib.util
+    registry=home/'.config/harness-launcher/profiles';registry.mkdir(parents=True,mode=0o700)
+    spec=importlib.util.spec_from_file_location('omp_projection_fixture',repo/'bin/harness_omp_projection.py')
+    projection=importlib.util.module_from_spec(spec);spec.loader.exec_module(projection)
+    previous_home=os.environ.get('HOME');os.environ['HOME']=str(home)
+    try:
+        assert Path.home()==home and binary.parent==tools
+        projection.Publisher().prepare({'binding_sha256':'1'*64,'review_sha256':'2'*64,'selection_sha256':'3'*64,'operation_sha256':'4'*64,'controller':{'native':'fixture','pane':'fixture','managed':'fixture'},'scope':'OMP3_CONFIGURATION','ssot':None})
+    finally:
+        if previous_home is None:os.environ.pop('HOME',None)
+        else:os.environ['HOME']=previous_home
     expected_env={'HOME':str(ns/'home'),'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','TMPDIR':str(ns/'tmp'),'XDG_CACHE_HOME':str(ns/'cache'),'XDG_CONFIG_HOME':str(ns/'config'),'XDG_STATE_HOME':str(ns/'state'),'XDG_DATA_HOME':str(ns/'data'),'PI_CODING_AGENT_DIR':str(ns/'agent'),'PI_CODING_AGENT_SESSION_DIR':str(ns/'history'),'PI_NATIVES_DIR':str(ns/'native-cache'),'TERM':'xterm-256color'}
     # Calibrate only the fake interpreter startup, not the OMP contract. macOS
     # adds this nonsecret field even to a directly launched empty-env Python.
