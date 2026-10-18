@@ -264,9 +264,28 @@ Login and model listing always use the prepared native home's `cwd` and lock,
 including with outer workspace controls. These exact argument arrays permit no
 extra flags or suffixes. Native login may open a browser and persist credentials;
 listing may refresh provider catalogs or credentials before filtering. Neither
-command proves a model response. Restore/resume/fork, other native management,
-and unbound native flags remain refused; this is temporary bounded support, not
-complete OMP CLI compatibility.
+command proves a model response. Other native management, direct native
+restore/resume/fork flags and unbound native flags remain refused; this is
+bounded support, not complete OMP CLI compatibility.
+
+The paired normal kernel entry and an explicitly enrolled profile also support
+opt-in continuation:
+
+```bash
+ex omp --session-new --print -- 'Remember a synthetic label.'
+ex omp --session-resume <handle> --print -- 'Recall that label.'
+```
+
+Use the handle printed as `OMP_CONTINUATION_HANDLE` after a successful durable
+NEW run. It identifies the existing kernel workspace, not a native UUID or a
+permission. These modes require one leading mode, `--`, at most one literal
+prompt, and the existing nonstate options. They cannot be combined with outer
+cwd/workspace controls. RESUME reuses the original workspace and bound runtime
+under current host/profile admission; it never creates a replacement workspace.
+Missing, revoked, retired or unresolved state stops without retry or fallback.
+The original workspace must remain available; this does not promise indefinite
+retention or cross-host restoration. See
+[normal OMP continuation](docs/architecture.md#normal-omp-continuation).
 
 Before deploying the typed selector, the trusted configuration operator must
 prepare its complete enrollment index. Never-enrolled profiles retain the

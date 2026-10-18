@@ -194,10 +194,11 @@ and booleans `-p`, `--print`, `--no-tools`, `--no-lsp`, `--no-pty`,
 `--no-extensions`, `--no-skills`, `--no-rules`, `--no-title`, `--hide-thinking`,
 and `--no-prewalk`. Separate option values must be present and not start with
 `-`; use the equals form for those values. Other native management subcommands
-and flags, including state/auth/path overrides and restore/resume/fork,
-remain refused until their native transport is supported. This temporary
-restriction does not claim full CLI, continuation or cross-runtime history
-support. Literal text after `--` is not scanned as a launcher command.
+and flags, including direct state/auth/path overrides and native
+restore/resume/fork flags, remain refused. The explicit managed continuation
+modes below are a separate bounded transport. Neither route claims full CLI
+or cross-runtime history support. Literal text after `--` is not scanned as a
+launcher command.
 
 Run the fake-only routing regression with `zsh test/test-omp-routing.sh`.
 The existing `test/run-all.sh` also discovers it through `test/test-*.sh`.
@@ -205,6 +206,69 @@ The routing fixture checks the outgoing environment separately from its
 interpreter's startup-added environment. Source implementation and
 fake proof do not activate an installed launcher or prove interactive OMP,
 account authentication, provider calls, or full session restoration.
+
+### Normal OMP continuation
+
+The normal kernel and public runtime must implement this protocol together.
+`omp --session-new [options] -- [prompt]` creates one ordinary isolated kernel
+workspace W. `omp --session-resume H [options] -- [prompt]` selects that existing
+target before workspace choice, begin, owner lookup, history or fresh allocation.
+H is W with hyphens removed and lowercase hex; it is only a lookup key. Caller
+cwd/isolated-owner controls, native state/path flags, duplicate or late modes,
+and more than one prompt are refused. Existing fresh/management/other-runtime
+routes do not read continuation metadata.
+
+The registered source is resolved with the existing profile resolver. The
+projection reader's internal `select-continuation-source` adapter joins that
+source, the existing registry and physical source/config root with the exact
+candidate bound consumer. It exports a closed context of at most 16 KiB after
+the current host/profile/expiry/B/N and manifest checks. The manifest also binds
+the continuation helper and profile resolver before import. Never-enrolled
+profiles keep their original routes but cannot use these two modes. A current
+root-authorized generation refresh can be admitted; historical generation
+numbers are not permanent pins. An original bound runtime that current
+projection cannot admit is refused without repinning it to current.
+
+After normal NEW begin, the kernel exclusively publishes one private 0600,
+single-link, bounded receipt at its existing
+`session-state/sessions/W/omp-continuation.json`. Its immutable origin binds
+the canonical source, state, physical workspace, runtime pin, binding bytes,
+source/session markers and lock identity. `harness_omp_continuation.py` performs
+only metadata operations through a closed private-descriptor JSON interface;
+it launches no subprocess or native manager and cannot create a kernel origin.
+These hashes describe trusted local metadata, not a cryptographic grant or
+protection from malicious same-UID rewriting of kernel/config state.
+
+Bound aliases acquire the original workspace lease first and prepared N lock
+second, then repeat current and origin admission. Native data goes only to
+`N/launcher-continuations/H/sessions`. NEW exclusively creates that directory;
+RESUME uses the one admitted absolute native path. Native runs in original C
+with the same explicit 13-variable environment and ordinary foreground streams.
+RESUME skips generic session create, GC, new owner and finish. Both locks remain
+held through known terminal observation and finalization, then release N first.
+NEW retains its ordinary finish exactly once.
+
+PENDING does not yield a usable handle. Native zero plus a durable identity
+postcheck yields READY; RESUME changes it to IN_FLIGHT before the one call.
+Unknown terminal leaves PENDING/IN_FLIGHT unresolved. Known failure, fork or
+changed identity blocks the receipt and retains partial effects. Native
+nonzero is preserved; native zero with failed postcheck becomes wrapper exit2.
+No automatic retry, native UUID fabrication or history import occurs.
+
+The bounded observer examines at most16 directory entries and exactly one
+JSONL of at most1 MiB. It discards the first LF-terminated title line and reads
+only the second strict UTF-8 v3 header, at most64 KiB per line. It verifies U,
+absolute P, original C, timestamp, filename and absent/null parentSession.
+Transcript bodies are never read. Every read checks full pre/post stat identity;
+across a normal native append only size/mtime/ctime may change. A same-path
+inode replacement or second fork file cannot silently become READY.
+
+Missing/retired original C or metadata is a refusal, not permission to recreate
+or retain a workspace indefinitely. This is ordinary native execution with its
+usual history/auth/cache/provider effects, not sandbox, pre-provider live-manager
+identity, cross-host restore or full compatibility proof. Run the disposable
+fake-only checks with `bash test/test-omp-continuation.sh`; paired kernel tests
+must additionally cover the real Entry/dispatcher/bound-runtime composition.
 
 ### Typed OMP host/profile enrollment
 

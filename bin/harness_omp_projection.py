@@ -8,6 +8,7 @@ import contextlib
 import datetime
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -234,7 +235,7 @@ def check_provenance(value, lane=None, valid_until=None):
         require(value['ssot'] is None, PROVENANCE)
 
 
-def launcher_binding(consumer):
+def launcher_binding(consumer, companions=()):
     runtime = physical(Path.home()) / '.local/state/kilhyeonjun-harness/launcher-runtimes'
     raw, _ = read_file(runtime / 'current.json')
     current = decode(raw)
@@ -254,7 +255,7 @@ def launcher_binding(consumer):
     keys(manifest, 'version revision files')
     require(manifest['revision'] == current['revision'] and manifest['version'] == current['version'] and type(manifest['files']) is dict, BINDING)
     consumer_sha, _ = file_sha(consumer, stat.S_IMODE(Path(consumer).lstat().st_mode))
-    for name in ('bin/aliases.zsh', 'bin/harness_omp_projection.py'):
+    for name in ('bin/aliases.zsh', 'bin/harness_omp_projection.py', *companions):
         item = manifest['files'].get(name)
         keys(item, 'mode sha256'); integer(item['mode']); sha(item['sha256'])
         require(item['mode'] in (0o400, 0o500), BINDING)
@@ -365,7 +366,7 @@ def check_state(value, index):
         check_row(row); require(name == row['profile_binding']['name'])
 
 
-def select(name, root, consumer):
+def select(name, root, consumer, *, continuation=False):
     """None means proven never-enrolled; every unavailable/error is a STOP."""
     try:
         directory(base(), 0o700)
@@ -387,9 +388,66 @@ def select(name, root, consumer):
             result = {'HARNESS_OMP_BIN': row['binary']['path'],
                       'HARNESS_OMP_ROOT': row['native_home']['path'],
                       'HARNESS_OMP_SHA256': row['binary']['sha256']}
+            if continuation:
+                for generation in (index['generation'], state['generation'], row['enrollment_generation']):
+                    require(0 < generation <= 2**63 - 1)
+                binding = launcher_binding(consumer, ('bin/harness_omp_continuation.py',
+                                                       'bin/harness_profile_resolver.py'))
+                companion = Path(consumer).parent
+                helper_sha, _ = file_sha(companion / 'harness_omp_continuation.py',
+                                        stat.S_IMODE((companion / 'harness_omp_continuation.py').lstat().st_mode))
+                projection_sha, _ = file_sha(companion / 'harness_omp_projection.py',
+                                            stat.S_IMODE((companion / 'harness_omp_projection.py').lstat().st_mode))
+                result = {'schema': 'omp-continuation-context/v1',
+                          'profile_binding_sha256': digest(canonical(row['profile_binding'])),
+                          'host_binding_sha256': digest(canonical(index['host'])),
+                          'namespace_path': row['native_home']['path'],
+                          'namespace_identity': dict(row['native_home']['root_identity'], mode=row['native_home']['mode']),
+                          'namespace_marker_sha256': row['native_home']['owner_marker']['sha256'],
+                          'binary_path': row['binary']['path'],
+                          'binary_sha256': row['binary']['sha256'],
+                          'binary_size': row['binary']['bytes'],
+                          'binary_release': row['binary']['release'],
+                          'current_sha256': binding['current_sha256'],
+                          'snapshot_revision': binding['revision'],
+                          'manifest_sha256': binding['manifest_sha256'],
+                          'consumer_sha256': binding['consumer_sha256'],
+                          'projection_helper_sha256': projection_sha,
+                          'continuation_helper_sha256': helper_sha,
+                          'index_generation': index['generation'],
+                          'state_generation': state['generation'],
+                          'enrollment_generation': row['enrollment_generation'],
+                          'lane': row['lane'], 'valid_until': row['valid_until'],
+                          'provenance_sha256': digest(canonical(row['provenance']))}
+                require(len(canonical(result)) <= 16384)
         i2, identity2 = read_file(base() / 'enrollment.json')
         require(i1 == i2 and identity1 == identity2, BINDING)
         return result
+    except ProjectionError:
+        raise
+    except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError):
+        raise ProjectionError() from None
+
+
+def select_continuation_source(source, registry, config_root, consumer):
+    """Current registered source/context only; never a target or lease grant.
+
+    config_root is the physical canonical source whose config/launcher.env is
+    used by normal Entry. It cannot redirect to a project or another profile.
+    The existing profile resolver is loaded only after manifest verification.
+    """
+    try:
+        source = physical(source); directory(source)
+        require(physical(registry) == registry_dir() and physical(config_root) == source, BINDING)
+        launcher_binding(consumer, ('bin/harness_omp_continuation.py', 'bin/harness_profile_resolver.py'))
+        resolver = Path(consumer).parent / 'harness_profile_resolver.py'
+        spec = importlib.util.spec_from_file_location('_omp_registered_profile', resolver)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        selection = module.resolve(source, registry_dir())
+        require(selection.harness_root == source, BINDING)
+        value = select(selection.profile, str(source), consumer, continuation=True)
+        require(value is not None, 'OMP_CONTINUATION_NOT_ENROLLED')
+        return value
     except ProjectionError:
         raise
     except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError):
@@ -585,6 +643,10 @@ def main(argv):
     # Private shell bridge is readonly. All writes require the root controller
     # to call Publisher directly; no public user-facing command is registered.
     try:
+        if len(argv) == 6 and argv[1] == 'select-continuation-source':
+            value = select_continuation_source(*argv[2:])
+            sys.stdout.buffer.write(canonical(value) + b'\n')
+            return 0
         require(len(argv) == 5 and argv[1] == 'select')
         result = select(argv[2], argv[3], argv[4])
         # Paths are validated control-free; the shell reads fields without eval.
