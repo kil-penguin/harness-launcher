@@ -250,9 +250,23 @@ prepared native home and a SHA-256-pinned executable. Configure
 `config/launcher.env` only after preparing that owned namespace. There is no
 `PATH` fallback or automatic download/configuration. `ex omp --version` and
 `ex omp --help` bypass workspace/session preparation. Existing leading `--cwd`
-and workspace controls keep their usual meaning. The initial adapter refuses
-restore/resume/fork, native management subcommands, and unbound native flags;
-this is temporary fresh-session support, not complete OMP CLI compatibility.
+and workspace controls keep their usual meaning for fresh sessions. Bounded
+management also bypasses workspace/session preparation:
+
+```bash
+ex omp login anthropic
+ex omp login openai-codex
+ex omp models ls anthropic --json --kind chat --no-extensions
+ex omp models ls openai-codex --json --kind chat --no-extensions
+```
+
+Login and model listing always use the prepared native home's `cwd` and lock,
+including with outer workspace controls. These exact argument arrays permit no
+extra flags or suffixes. Native login may open a browser and persist credentials;
+listing may refresh provider catalogs or credentials before filtering. Neither
+command proves a model response. Restore/resume/fork, other native management,
+and unbound native flags remain refused; this is temporary bounded support, not
+complete OMP CLI compatibility.
 See [OMP entry and prepared namespace](docs/architecture.md#omp-entry-and-prepared-namespace)
 for the exact boundary and supported options.
 
