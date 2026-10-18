@@ -1166,7 +1166,7 @@ _harness_launcher_codex_history_begin() {
   return 0
 }
 
-# The initial OMP route is fresh-session only. Parse option values lexically;
+# OMP accepts fresh sessions and six exact management arrays. Parse values lexically;
 # never reinterpret a value or tokens after -- as a launcher control.
 _harness_launcher_omp_check_args() {
   case "${1:-}" in
@@ -1175,8 +1175,14 @@ _harness_launcher_omp_check_args() {
     --version|--help)
       [[ $# == 1 ]] && return 0
       echo 'harness-launcher: OMP public management takes no additional arguments' >&2; return 2 ;;
-    auth|auth-broker|auth-gateway|login|token|session|gc|config|update|install|plugin|setup|worktree|join|share|stream|clip|ps|shell|acp|agents|anonymize|bench|browser-relay|cleanse|collab|commit|completions|compress|dry-balance|find|gallery|git|grep|grievances|if-bench|images|models|play|predict|read|render|say|search|skill|ssh|stats|tiny-models|toks|ttsr|usage|resume|continue|fork)
-      echo 'harness-launcher: this OMP entry currently supports fresh sessions and public version/help only' >&2; return 2 ;;
+    login)
+      [[ $# == 2 && "$2" == (anthropic|openai-codex) ]] && return 0
+      echo 'harness-launcher: OMP login requires exactly anthropic or openai-codex' >&2; return 2 ;;
+    models)
+      [[ $# == 7 && "$2" == ls && "$3" == (anthropic|openai-codex) && "$4" == --json && "$5" == --kind && "$6" == chat && "$7" == --no-extensions ]] && return 0
+      echo 'harness-launcher: use omp models ls <anthropic|openai-codex> --json --kind chat --no-extensions' >&2; return 2 ;;
+    auth|auth-broker|auth-gateway|token|session|gc|config|update|install|plugin|setup|worktree|join|share|stream|clip|ps|shell|acp|agents|anonymize|bench|browser-relay|cleanse|collab|commit|completions|compress|dry-balance|find|gallery|git|grep|grievances|if-bench|images|play|predict|read|render|say|search|skill|ssh|stats|tiny-models|toks|ttsr|usage|resume|continue|fork)
+      echo 'harness-launcher: this OMP management or continuation command is not supported on this entry' >&2; return 2 ;;
   esac
   while (( $# )); do
     case "$1" in
@@ -1248,7 +1254,10 @@ _harness_launcher_run_omp() (
       echo 'harness-launcher: OMP namespace is already active' >&2; return 2
     }
   fi
-  cd "${HARNESS_RUN_DIR:-$root/cwd}" || return 2
+  # Nonpublic management owns the prepared native home, not a workspace.
+  local run_dir="${HARNESS_RUN_DIR:-$root/cwd}"
+  [[ "${1:-}" == (login|models) ]] && run_dir="$root/cwd"
+  cd "$run_dir" || return 2
   umask 077
   /usr/bin/env -i HOME="$root/home" PATH=/usr/bin:/bin LANG=C LC_ALL=C \
     TMPDIR="$root/tmp" XDG_CACHE_HOME="$root/cache" XDG_CONFIG_HOME="$root/config" \
@@ -1352,7 +1361,7 @@ _harness_launcher_run() {
     local -a omp_native_args=()
     (( $# <= selector_i )) || omp_native_args=("${@[selector_i+1,-1]}")
     _harness_launcher_omp_check_args "${omp_native_args[@]}" || return 2
-    if [[ "${omp_native_args[1]-}" == (--version|--help) ]]; then
+    if [[ "${omp_native_args[1]-}" == (--version|--help|login|models) ]]; then
       _harness_launcher_run_omp "${omp_native_args[@]}"
       return $?
     fi
@@ -2607,6 +2616,30 @@ _harness_launcher_run_kiro_cli() {
 _harness_launcher_complete() {
   local dir="$1"
   local -a shortcuts
+  # Complete only the bounded OMP management grammar; never query a runtime.
+  local omp_i=2
+  [[ "${words[omp_i]-}" == --cwd ]] && (( omp_i += 2 ))
+  case "${words[omp_i]-}" in
+    --isolated|--no-isolated) (( omp_i += 1 )) ;;
+    --isolated-session) (( omp_i += 2 )) ;;
+  esac
+  if [[ "${words[omp_i]-}" == omp ]]; then
+    if (( CURRENT == omp_i + 1 )); then
+      compadd -- --version --help login models
+    elif [[ "${words[omp_i+1]-}" == login ]] && (( CURRENT == omp_i + 2 )); then
+      compadd -- anthropic openai-codex
+    elif [[ "${words[omp_i+1]-}" == models ]]; then
+      case $(( CURRENT - omp_i )) in
+        2) compadd -- ls ;;
+        3) [[ "${words[omp_i+2]-}" == ls ]] && compadd -- anthropic openai-codex ;;
+        4) compadd -- --json ;;
+        5) compadd -- --kind ;;
+        6) compadd -- chat ;;
+        7) compadd -- --no-extensions ;;
+      esac
+    fi
+    return 0
+  fi
   local m desc codex_surface_desc="" kiro_surface_desc=""
   local HARNESS_NAME HARNESS_PREFIX HARNESS_CODEX_GLOBAL_MCP_ALLOWLIST
   local HARNESS_MCP_SURFACE_POLICY="" mcp_surface_policy
@@ -2639,6 +2672,7 @@ _harness_launcher_complete() {
     '--chrome:Enable Claude in Chrome integration'
     '--no-chrome:Disable Claude in Chrome integration'
     'claude:Claude Code native (explicit selector; existing presets supported)'
+    'omp:Oh My Pi fresh session or bounded login/models management (explicit, pinned)'
     "codex:Codex CLI native (272K default · 1m opt-in · profiles${codex_surface_desc}/fork/safety)"
     'codex-smoke:Send one bounded metadata-only Codex verification event'
     'checkup:Headless read-only /checkup prompt-audit at the harness root'

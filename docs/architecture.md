@@ -160,15 +160,41 @@ containment guarantee.
 
 Sole native `--version` and `--help` return through the pinned route before
 session/history, model or provider preparation, including with outer workspace
-controls. Normal fresh sessions preserve native exit status. The initial
-adapter accepts positional prompt tokens and `--`; value options `--model`,
+controls. Four additional exact native argument arrays are accepted:
+
+```text
+login anthropic
+login openai-codex
+models ls anthropic --json --kind chat --no-extensions
+models ls openai-codex --json --kind chat --no-extensions
+```
+
+All six management forms are classified before workspace/session allocation,
+isolated leases, heartbeat or journal preparation. Login/models validate the
+same executable pin and owned namespace and use the existing native-home kernel
+lock, outgoing environment, and fixed `<root>/cwd`, even when an outer `--cwd`
+or workspace control is supplied. A busy or invalid lock is refused without
+deleting it. Acquired locks unwind on exit/signals; the persistent lock file is
+retained. Native exit status is preserved. Missing, reordered or additional
+management arguments (including a trailing `--`) are refused with status 2,
+without native execution or fallback. Completion suggests this bounded grammar
+without querying the runtime.
+
+Login can open a browser and write native credentials under the prepared home.
+Model listing can refresh catalogs or credentials across providers before
+display filtering; its provider argument and `--no-extensions` do not guarantee
+one-provider traffic, credential validity, active-model eligibility, or a model
+response. The launcher does not read credentials or adopt another native home.
+
+Normal fresh sessions preserve native exit status. The adapter accepts
+positional prompt tokens and `--`; value options `--model`,
 `--smol`, `--slow`, `--plan`, `--provider`, `--models`, `--thinking`,
 `--service-tier`, `--tools`, `--skills`, `--max-time` (including `--name=value`);
 and booleans `-p`, `--print`, `--no-tools`, `--no-lsp`, `--no-pty`,
 `--no-extensions`, `--no-skills`, `--no-rules`, `--no-title`, `--hide-thinking`,
 and `--no-prewalk`. Separate option values must be present and not start with
-`-`; use the equals form for those values. Native management subcommands and
-other flags, including state/auth/path overrides and restore/resume/fork,
+`-`; use the equals form for those values. Other native management subcommands
+and flags, including state/auth/path overrides and restore/resume/fork,
 remain refused until their native transport is supported. This temporary
 restriction does not claim full CLI, continuation or cross-runtime history
 support. Literal text after `--` is not scanned as a launcher command.
