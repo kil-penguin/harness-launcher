@@ -206,6 +206,93 @@ interpreter's startup-added environment. Source implementation and
 fake proof do not activate an installed launcher or prove interactive OMP,
 account authentication, provider calls, or full session restoration.
 
+### Typed OMP host/profile enrollment
+
+The internal `bin/harness_omp_projection.py` reader runs only for an OMP
+selector, after the existing local reset and trusted `launcher.env` source,
+before management, session allocation or native execution. It introduces no
+public command, provider grant or configuration-source override. Its fixed
+user configuration directory is
+`~/.config/harness-launcher/omp-projection-v1/`: directory `0700`,
+`enrollment.json`, `state.json` and `writer.lock` owned regular single-link
+files `0600`. The trusted caller's user HOME is the same context used by
+profile registration; project/cwd/XDG inputs cannot choose these files.
+Symlink path components, duplicate/unknown JSON keys, oversized records
+(65,536 bytes), invalid UTF-8, control strings and loose scalar types fail.
+
+The complete host-bound enrollment index is read first. Only a valid index
+whose `enrolled_profiles` lacks the selected name proves NEVER_ENROLLED. This
+branch never opens `state.json` and preserves the previous three-value
+configuration, validator and argv/env/cwd/exit behavior exactly. An enrolled
+entry binds the registered physical root and registry file identity/full hash;
+it cannot become absent because that binding no longer matches. BLOCKED and
+REVOKED entries stop before opening payload or launching native code. Missing
+or invalid index never means never-enrolled. Non-OMP paths do not read either
+file.
+
+An active selected row joins payload generation, enrollment generation,
+canonical row SHA-256 and operation provenance. Its host includes installation
+locator, OS hostname/system/architecture/UID and registry-directory identity.
+Its profile includes root/registry identities and registry hash. The row pins
+current managed selection hash/revision/manifest and consumer source hash,
+the exact physical `0555` executable/full hash/size/UID/release, and the `0700`
+prepared namespace/physical identity/`0600` owner-marker hash and owner
+binding. The selected snapshot manifest must contain and hash both consumer
+and helper; the stager already packages all tracked `bin` files. A fresh-shell
+snapshot test verifies helper availability rather than assuming a fixed
+release file count. The index is re-read with unchanged bytes and file
+identity after selection (I1/I2); disagreement stops without retry. Only then
+do the exact three projected values enter the existing native validator.
+
+`Publisher` is an internal Python interface for the already authorized trusted
+configuration operator. It has no native operation or authentication endpoint.
+Receipt/controller/scope fields describe that operator's selected operation;
+JSON, UID and hashes do not manufacture permission. Like `launcher.env`, this
+boundary does not protect against a malicious same-UID trusted writer or
+attest hardware identity. It reads only public configuration/binary metadata
+and the nonsecret owner marker, never credentials or session bodies.
+
+The rollout is deliberately ordered:
+
+1. Under the old consumer, the root operator calls `Publisher.prepare` with
+   reviewed operation provenance to create the first complete empty index.
+   Creation requires a new directory; missing/corrupt existing state cannot
+   be reset empty. A failed preparation leaves the old consumer in service.
+2. Publish/activate a reviewed complete snapshot containing the helper through
+   the normal release procedure. Never-enrolled profiles remain compatible.
+3. Capture the selected physical host/profile/current/B/N facts with
+   `capture_row`, an explicit UTC expiry, release data and operation provenance.
+   Under the cooperative exclusive lock, `Publisher.publish` compares the
+   previously read full SHA/generation token, publishes validated payload
+   first, then atomically commits its joined enrollment entry. Publication
+   fsyncs files and directory; any partial pair fails closed. Unrelated joins
+   advance consistently with the shared payload generation. An inconsistent
+   pair cannot be silently adopted by a later normal publisher.
+
+A finite root-selected `BOOTSTRAP_ACTIVE` row works without a future SSOT
+export. An authoritative handover first calls `Publisher.block`, sealing
+BLOCKED in the index before replacing active data with a nonexecutable
+`TRANSITION_BLOCKED` tombstone. Only a valid approved SSOT export/ACL/revision
+and finite export-bounded expiry can then become `SSOT_ACTIVE` in a new
+generation with `bootstrap_retired=true`. Export failure, expiry or revocation
+stops; there is no bootstrap resurrection or legacy fallback. Rollback is
+another approved still-valid SSOT revision through BLOCKED, never a pin move
+or old bootstrap. REVOKED tombstones cannot be republished active. Selector
+entries are retained. `legacy_retired` is a separate per-profile root decision
+after approved SSOT/parity/restore conditions; it never regresses or changes
+other profiles. These conditions remain operator evidence, not a new grant
+service in the helper. Future SSOT backing is not asserted implemented here.
+
+The reader emits fixed `OMP_*` error labels without paths, data bodies or
+credentials. It does not repair configuration, allocate workspace sessions or
+call native code. This is cooperative local configuration consistency, not a
+kernel sandbox, race-free executable launch, hardware antirollback or instant
+offline revocation detection. The existing native validation/TOCTOU boundary
+is retained. Actual activation, native use and remote delivery require their
+own root-owned evidence. `bash test/test-omp-projection.sh` covers these data
+and dispatcher boundaries exclusively with temporary homes and absolute fake
+native executables.
+
 ## Generated runtime homes
 
 The launcher keeps project-specific state under:
