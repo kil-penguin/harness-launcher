@@ -20,6 +20,16 @@ mkdir -p "$STUB" "$FAKE_HOME" "$PROFILES/profiles" "$TMP/out" "$SOURCE/config" "
 
 bash "$ROOT/test/lib/install-runtime-fixture.sh" "$ROOT" "$PREFIX"
 
+# The clean verifier PATH already includes STUB. Bind its python3 to the
+# launcher's supported runtime instead of macOS's xcrun-backed system shim.
+# This adds no PATH directory or sandbox permission and copies no executable.
+FIXTURE_PYTHON="$(source "$ROOT/bin/harness-common.sh"; harness_python3_resolve)"
+[[ "$FIXTURE_PYTHON" == /* && -x "$FIXTURE_PYTHON" ]] || {
+  echo 'FAIL: headless fixture requires an absolute supported Python executable' >&2
+  exit 1
+}
+ln -s "$FIXTURE_PYTHON" "$STUB/python3"
+
 git init -q --bare -b main "$REMOTE"
 git -C "$SOURCE" init -q -b main
 git -C "$SOURCE" config user.email test@example.invalid
