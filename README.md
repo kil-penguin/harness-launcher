@@ -801,9 +801,9 @@ See [the trusted preservation guide](docs/trusted-preservation.md) for the
 one-shot, native-confirmed Git preservation command, including its strict
 opt-in GitHub SSH identity binding for live remote verification.
 
-The OMP continuation fixture requires a real jq executable. It selects the
-system jq first, otherwise jq from the normal test runner PATH, and exposes only
-that executable’s physical directory to its preparation subprocess; the original
+The OMP continuation and required-loading fixtures require a real jq executable.
+They select system jq first, otherwise jq from the normal test runner PATH, and
+expose only that executable’s physical directory to preparation; the original
 dependency safety checks and isolated native environment remain in force. CI
 declares jq explicitly.
 

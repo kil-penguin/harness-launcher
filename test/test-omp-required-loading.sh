@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Admit only the pinned synthetic default or an explicitly equal owned source.
 HARNESS_TEST_OMP_SOURCE="$(python3 -I -S -B "$ROOT/test/omp-fixture-source.py")"
 export HARNESS_TEST_OMP_SOURCE
+python3 -I -S -B "$ROOT/test/test_omp_required_fixture_path.py"
 python3 -I -S -B - "$ROOT" <<'PYTEST'
 import hashlib, importlib.util, json, os, shlex, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
@@ -99,7 +100,13 @@ Path('''+repr(str(self.capture))+''').write_text(json.dumps({'policy_sha256':has
              'upstream_base_revision':'96894a6147d8cc64b7e00ad3a7d7178fd93b9531',
              'source_patch_sha256':'2'*64,'build_provenance_sha256':'3'*64},provenance)
         self.publisher.publish('ex', self.row, self.publisher.token())
-        self.env = {'HOME':str(self.home),'PATH':'/usr/bin:/bin:/opt/homebrew/bin','LC_ALL':'C','TERM':'dumb',
+        # Match the continuation fixture: admit the selected real jq directory,
+        # never a shared bin prefix that could shadow declared system children.
+        jq = shutil.which('jq', path='/usr/bin:/bin') or shutil.which('jq')
+        self.assertIsNotNone(jq, 'the OMP required-loading fixture requires real jq')
+        jq_parent = str(Path(jq).resolve(strict=True).parent)
+        preparation_path = ':'.join(dict.fromkeys([jq_parent, '/usr/bin', '/bin']))
+        self.env = {'HOME':str(self.home),'PATH':preparation_path,'LC_ALL':'C','TERM':'dumb',
                     'HARNESS_CLAUDE_PLUGIN_MIRROR':'0','PYTHONDONTWRITEBYTECODE':'1'}
 
     def restore_home(self):

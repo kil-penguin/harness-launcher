@@ -1321,8 +1321,9 @@ The launcher prefers visible failures over silent fallback when a boundary is am
 - failed runtime-home preparation stops the selected runtime;
 - app-bundled Codex fallback requires explicit opt-in.
 
-OMP fixture dependency preparation admits one real jq directory in addition to
-the existing denial-tools and system paths. The production dependency binding,
+Both OMP continuation and required-loading fixtures admit the selected real jq
+physical directory, rather than its shared bin alias, alongside their existing
+denial-tools (where used) and system paths. The production dependency binding,
 unsafe-ancestor and shadow checks remain unchanged; fixture preparation PATH is
 separate from the unchanged native environment. Missing or refused jq is a setup
 failure, with no skipped oracle or native fallback.
