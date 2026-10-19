@@ -224,6 +224,36 @@ class Consumers(FixtureCase):
                 self.assertFalse(marker.exists())
                 self.assertFalse((self.base / 'payload-imported').exists())
 
+    def runner_failure_metadata(self, shell, status, first_success=False):
+        # Controlled shell test input, run by actual system interpreters. This
+        # normal source-admitted runner stops before any real suite/full/Git.
+        shutil.copy2(REPO / 'test/run-all.sh', self.test / 'run-all.sh')
+        first = self.test / 'test-a-controlled.sh'
+        first.write_text('#!/bin/' + shell + '\nprintf "controlled stdout\\n"\nprintf "controlled stderr\\n" >&2\nexit ' + str(0 if first_success else status) + '\n')
+        first.chmod(0o644)
+        second = self.test / 'test-z-controlled.sh'
+        second.write_text('#!/bin/' + shell + '\nprintf second > "$HOME/second-reached"\nexit ' + str(status) + '\n')
+        second.chmod(0o644)
+        env = dict(self.env, BASH_BIN='/bin/bash', ZSH_BIN='/bin/zsh')
+        result = self.capture('runner-controlled-' + shell, ['/bin/bash', str(self.test / 'run-all.sh')], env)
+        self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+        self.assertIn('controlled stdout\n', result.stdout)
+        failed = 'test-z-controlled.sh' if first_success else 'test-a-controlled.sh'
+        expected = 'REGRESSION_CHILD_FAILED suite=' + failed + ' interpreter=' + shell + ' exit=' + str(status) + '\n'
+        self.assertEqual(result.stderr, 'controlled stderr\n' + expected)
+        self.assertEqual((self.home / 'second-reached').exists(), first_success)
+        self.assertNotIn(str(self.checkout), result.stderr)
+        self.assertNotIn(str(self.home), result.stderr)
+
+    def test_runner_bash_failure_keeps_status_streams_and_failfast(self):
+        self.runner_failure_metadata('bash', 23)
+
+    def test_runner_zsh_failure_keeps_status_streams_and_failfast(self):
+        self.runner_failure_metadata('zsh', 29)
+
+    def test_runner_success_continues_and_reports_only_later_failure(self):
+        self.runner_failure_metadata('bash', 31, first_success=True)
+
     def runner_binding(self, explicit):
         # Supported interpreter injection observes the actual first dispatch, then
         # deliberately exits97. This is NOT a full-runner or suite-PASS claim.

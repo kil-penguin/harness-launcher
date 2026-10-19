@@ -1327,6 +1327,11 @@ denial-tools (where used) and system paths. The production dependency binding,
 unsafe-ancestor and shadow checks remain unchanged; fixture preparation PATH is
 separate from the unchanged native environment. Missing or refused jq is a setup
 failure, with no skipped oracle or native fallback.
+The shell-suite dispatcher emits fixed failure metadata (suite basename,
+interpreter basename and exit status), retaining original child streams, status,
+fail-fast behavior, skip policy and success accounting. Metadata is emitted only
+after a child returns nonzero; external interruption or unavailable logs may still
+leave the actual internal failure unobserved. No guard or assertion is relaxed.
 Required-loading scopes this preparation PATH across its entry child, in-process
 readonly revalidation and CLI validator for the fixture lifetime. Cleanup restores
 the caller environment; the validation assertions and production guards are unchanged.

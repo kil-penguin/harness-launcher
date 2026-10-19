@@ -51,8 +51,14 @@ for test_file in "$ROOT"/test/test-*.sh; do
   fi
 
   printf '==> %s (%s)\n' "$test_name" "$interpreter"
-  "$interpreter" "$test_file"
-  passed=$((passed + 1))
+  if "$interpreter" "$test_file"; then
+    passed=$((passed + 1))
+  else
+    child_status=$?
+    # Fixed metadata only; retain child streams/status even if reporting fails.
+    printf 'REGRESSION_CHILD_FAILED suite=%s interpreter=%s exit=%d\n' "$test_name" "${interpreter##*/}" "$child_status" >&2 || true
+    exit "$child_status"
+  fi
 done
 
 

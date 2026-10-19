@@ -806,6 +806,9 @@ They select system jq first, otherwise jq from the normal test runner PATH, and
 expose only that executable’s physical directory to preparation; the original
 dependency safety checks and isolated native environment remain in force. CI
 declares jq explicitly.
+The regression runner preserves shell-suite output and exit status. On child
+failure it also reports only the suite basename, interpreter basename and status;
+this identifies the dispatch boundary without dumping arguments or environment.
 The required-loading fixture applies that same preparation PATH to its parent
 readonly checks and CLI validator, then restores the caller PATH at cleanup.
 
