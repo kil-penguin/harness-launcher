@@ -130,11 +130,17 @@ The opt-in profiles participate in atomic publication and warm-cache drift repai
 
 The main profile does not downgrade reviewers: reviewer subagents route independently to Sol/medium by default and may explicitly escalate effort for unusually risky work.
 
-Generated homes default to `model_context_window = 272000` and
-`model_auto_compact_token_limit = 217600`, compacting at 80% before the GPT-5.6
-API's documented 272K long-context pricing boundary. The TUI context toggle or `codex ... 1m` emits
-`1000000` with the existing 414000 compact line. Codex clamps either request to
-the selected model/account maximum; verify effective context in a native session.
+New launches default to `Auto — Codex settings`. In this mode the launcher emits
+neither `model_context_window` nor `model_auto_compact_token_limit`; Codex resolves
+them using its normal configuration precedence and model metadata. Explicit
+native settings remain authoritative. The launcher does not fetch a catalog or
+pin today's model window during preparation.
+
+Explicit `272k`, `500k`, and `1m` modes retain predictable launcher policies:
+respectively `272000 / 217600`, `500000 / 400000`, and `1000000 / 414000`
+(requested window / automatic compaction threshold). Codex may clamp a request
+to the selected model/account maximum. Larger retained context can consume more
+quota; Auto is not a cost cap. Verify effective context in a native session.
 
 With Codex CLI 0.153.0 or newer, generated homes also enable
 `features.context_management.experimental_mode`. Eligible ChatGPT Plus, Pro,
@@ -264,9 +270,8 @@ opus   → GPT-5.6 Sol, medium
 Generated agent files are output. Edit the source agent definition instead.
 Launcher-generated custom roles set `model_context_window = 272000` and
 `model_auto_compact_token_limit = 217600` independently of the main profile.
-Consequently, selecting the 1M main-session mode retains its `1000000` and
-`414000` base-config values, while converted Claude agent roles remain at the
-272K/80% compact limit. This applies only to roles generated from
+Consequently, selecting Auto, 500K, or 1M for the main session does not enlarge
+converted Claude agent roles: they retain the 272K/80% compact limit. This applies only to roles generated from
 `.claude/agents/*.md`; Codex's built-in and ad-hoc agents have no launcher
 generated role file and are not globally capped by this setting. Provider-owned
 external roles such as synchronized `glider-*` TOMLs are also preserved rather
@@ -481,16 +486,25 @@ The interactive launcher also supports forking the last Codex session. Extra run
 When native Codex is selected interactively, the Profile menu offers the model
 profiles only; the work surface is a `🔌 MCP surface` toggle on the summary
 screen (the same UX as the Claude/Kiro `light` toggle) and combines with any
-profile. The adjacent `🧠 Context` toggle defaults to `272K (Recommended)` and
-can opt into `1M`; shortcuts accept the same `272k`/`1m` keywords before any
+profile. The adjacent `🧠 Context` toggle defaults to Auto and cycles through
+`Auto`, `272K`, `500K`, and `1M`; shortcuts accept `auto`, `272k`, `500k`, or `1m` before any
 free-form Codex arguments. The selection is stored in launch history and passed
 to preparation as `HARNESS_CODEX_CONTEXT`.
+
+Auto omits both launcher-owned numeric settings, including after a switch from
+an explicit mode. Existing launch-history choices are preserved, rather than
+rewritten to Auto. Older records cannot distinguish a default 272K selection
+from an explicit one. Exact-session resumes retain their bound runtime; old
+restores with no recorded context policy retain the legacy 272K fallback.
 
 The 272K mode emits `model_context_window = 272000` and
 `model_auto_compact_token_limit = 217600`, so compaction starts at 80% of the
 nominal window and remains below the 258400 effective ceiling reported by the
-current 95% model metadata. The 1M mode emits `1000000` and `414000`; Codex may
-clamp the requested window to the active account/model ceiling. Switching modes
+current 95% model metadata. The 500K mode emits `500000` and `400000`, also an
+80% threshold. The 1M mode emits `1000000` and `414000`; Codex may
+clamp the requested window to the active account/model ceiling. The 1M label
+describes the requested window, not a promise to retain one million tokens;
+its conservative compression policy can compact earlier than Auto. Switching modes
 invalidates the exact-surface warm check and regenerates `config.toml` before
 launch. `default` leaves `HARNESS_CODEX_MCP_PROFILE` unset and uses the
 manifest's minimal default surface; `work` exports

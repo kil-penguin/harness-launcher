@@ -16,8 +16,10 @@ case "$GLOBAL_PLUGIN_POLICY" in
   *) echo 'ERROR: HARNESS_CODEX_GLOBAL_PLUGIN_POLICY must be manage or preserve' >&2; exit 2 ;;
 esac
 
-CODEX_CONTEXT_MODE="${HARNESS_CODEX_CONTEXT:-272k}"
+CODEX_CONTEXT_MODE="${HARNESS_CODEX_CONTEXT:-auto}"
 case "$CODEX_CONTEXT_MODE" in
+  auto) CODEX_CONTEXT_WINDOW=""; CODEX_AUTO_COMPACT_TOKEN_LIMIT="" ;;
+  500k) CODEX_CONTEXT_WINDOW=500000; CODEX_AUTO_COMPACT_TOKEN_LIMIT=400000 ;;
   272k)
     CODEX_CONTEXT_WINDOW=272000
     CODEX_AUTO_COMPACT_TOKEN_LIMIT=217600
@@ -27,7 +29,7 @@ case "$CODEX_CONTEXT_MODE" in
     CODEX_AUTO_COMPACT_TOKEN_LIMIT=414000
     ;;
   *)
-    echo "ERROR: HARNESS_CODEX_CONTEXT must be '272k' or '1m' (got '$CODEX_CONTEXT_MODE')" >&2
+    echo "ERROR: HARNESS_CODEX_CONTEXT must be 'auto', '272k', '500k' or '1m' (got '$CODEX_CONTEXT_MODE')" >&2
     exit 2
     ;;
 esac
@@ -907,15 +909,13 @@ cat > "$tmp_config" <<TOML
 
 model = "gpt-5.6-terra"
 model_reasoning_effort = "medium"
-# Context is selected by the launcher. The 272K default compacts at 80% of the
-# nominal window (217600), below Codex's 95% effective ceiling (258400) with
-# room for the compaction turn. The explicit 1M option is clamped by Codex to
-# the active model/account ceiling and keeps the validated 414000 compact line.
-# Every newly reachable model must keep the selected compact limit below its
-# effective context ceiling.
-model_context_window = $CODEX_CONTEXT_WINDOW
-model_auto_compact_token_limit = $CODEX_AUTO_COMPACT_TOKEN_LIMIT
 TOML
+
+if [[ "$CODEX_CONTEXT_MODE" != auto ]]; then
+  printf 'model_context_window = %s\nmodel_auto_compact_token_limit = %s\n' \
+    "$CODEX_CONTEXT_WINDOW" "$CODEX_AUTO_COMPACT_TOKEN_LIMIT" >> "$tmp_config"
+fi
+
 
 # Validate explicit private Slack app opt-ins before publishing the config.
 slack_policy_toml="$(python3 "$SCRIPT_DIR/slack-approval-policy.py" toml)" || exit $?

@@ -186,8 +186,8 @@ run_mode() {
     return 1
   fi
 
-  if [[ "$(get_field PREPARE_CONTEXT "$stub_file")" != "272k" ]]; then
-    echo "FAIL: codex CLI $mode — default context must be 272k"
+  if [[ "$(get_field PREPARE_CONTEXT "$stub_file")" != "auto" ]]; then
+    echo "FAIL: codex CLI $mode — default context must be auto"
     return 1
   fi
 
@@ -526,7 +526,12 @@ run_codex "$STUB_CONTEXT_1M" base 1m
 case "$(get_field ARGV "$STUB_CONTEXT_1M")" in
   *" 1m"*|*"1m "*) echo "FAIL: codex CLI 1m — launcher keyword leaked into Codex argv"; exit 1 ;;
 esac
-echo "PASS: codex CLI 1m opts into long context before preparation"
+for context in auto 272k 500k 1m; do
+  : > "$STUB_CONTEXT_1M"
+  run_codex "$STUB_CONTEXT_1M" base "$context"
+  [[ "$(get_field PREPARE_CONTEXT "$STUB_CONTEXT_1M")" = "$context" ]] || { echo "FAIL: context $context"; exit 1; }
+done
+echo "PASS: codex CLI context selections reach preparation"
 
 # work is a surface keyword combinable with any model profile (same UX as the
 # claude `light` keyword) — both orders must select the profile AND the surface.

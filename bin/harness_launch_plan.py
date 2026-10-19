@@ -173,7 +173,7 @@ def _capabilities(source: Path, runtime: str, presets: list[dict]) -> dict[str, 
         "models": models,
         "efforts": list(dict.fromkeys(level for values in by_model.values() for level in values)),
         "efforts_by_model": by_model,
-        "contexts": ["272k", "1m"] if runtime=='codex' else ["standard", "1m"],
+        "contexts": ["auto", "272k", "500k", "1m"] if runtime=='codex' else ["standard", "1m"],
         "permissions": [], "approvals": [], "sandboxes": [],
     }
     if runtime == "codex":
@@ -241,7 +241,7 @@ def _grant(grant: dict | None, session: dict[str, Any] | None, source: Path) -> 
         "sandbox": result.get("sandbox") in CODEX_SANDBOXES,
         "network": result.get("network") in CODEX_NETWORKS,
         "bypass": result.get("bypass") == "1",
-        "context": result.get("context") in ("272k", "1m"),
+        "context": result.get("context") in ("auto", "272k", "500k", "1m"),
     }
     if any(key in result and not valid[key] for key in valid):
         return None
@@ -342,7 +342,7 @@ def plan(source: Path, runtime: str, preset: str, presets: list[dict], options: 
     if effort not in capability["efforts_by_model"][model]:
         _fail("unsupported_effort")
     native_preset=next(item for item in presets if item['id']==preset)
-    default_context='272k' if runtime=='codex' else '1m' if native_preset['model'].endswith('[1m]') else 'standard'
+    default_context=('272k' if selected_session else 'auto') if runtime=='codex' else '1m' if native_preset['model'].endswith('[1m]') else 'standard'
     context = selected_options.get("context", (selected_grant or {}).get("context", default_context))
     if context not in capability["contexts"]:
         _fail("unsupported_context")

@@ -261,9 +261,11 @@ Model and effort come from the session file, through `harness-restore-probe`
   main-thread turn in the window (each count an integer of 0 or more, sidechains
   ignored) above 200000, which a 200k context cannot reach. The third is the launch
   record's `context=1m`, below.
-- Codex: the last `turn_context` `model` and `effort`, and `context=1m` when the
-  rollout recorded a context window of at least 500000 tokens (otherwise
-  `272k`). An explicit `272k`/`1m` keyword wins.
+- Codex: the last `turn_context` `model` and `effort`. Context policy comes from
+  the recorded launch choice (`auto`, `272k`, `500k`, or `1m`), not a guessed
+  mapping from the observed window: Auto may resolve to different windows for
+  different models. Older restores with no recorded choice retain the legacy
+  `272k` fallback. An explicit context keyword wins.
 - The values become `--model`/`--effort` in the passthrough argv before caller-wins
   reconciliation, so a restored `xhigh` or `max` turns thinking on the same way a
   caller effort does. For Codex they are `-m <model> -c

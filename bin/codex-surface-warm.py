@@ -180,6 +180,8 @@ def config_matches(
         return False
     if config.get("model_reasoning_effort") != "medium":
         return False
+    if expected_context_window is None and ("model_context_window" in config or "model_auto_compact_token_limit" in config):
+        return False
     if config.get("model_context_window") != expected_context_window:
         return False
     if config.get("model_auto_compact_token_limit") != expected_auto_compact_limit:
@@ -484,8 +486,8 @@ def main():
     global MANIFEST_PATH
     MANIFEST_PATH = manifest_path
     try:
-        expected_context_window = int(context_window_raw)
-        expected_auto_compact_limit = int(auto_compact_limit_raw)
+        expected_context_window = int(context_window_raw) if context_window_raw else None
+        expected_auto_compact_limit = int(auto_compact_limit_raw) if auto_compact_limit_raw else None
     except ValueError:
         cold()
     stamp = load_object(stamp_path)

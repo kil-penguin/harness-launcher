@@ -449,7 +449,7 @@ _harness_launcher_restore_probe() {
           minimal) [[ "$agent" == codex ]] && restore_effort="$value" ;;
         esac ;;
       context)
-        [[ "$agent" == codex && "$value" == (272k|1m) ]] && restore_context="$value" ;;
+        [[ "$agent" == codex && "$value" == (auto|272k|500k|1m) ]] && restore_context="$value" ;;
     esac
   done
   return 0
@@ -478,13 +478,16 @@ _harness_launcher_restore_launch_record() {
       network) [[ "$agent" == codex && "$value" == (enabled|disabled) ]] && restore_network="$value" ;;
       bypass) [[ "$agent" == codex && "$value" == 1 ]] && restore_bypass=1 ;;
       profile) [[ "$agent" == codex && "$value" == (fast|base|sol|astra|plan|rich) ]] && restore_profile="$value" ;;
-      context) [[ "$agent" == claude && "$value" == 1m ]] && restore_window=1m ;;
+      context)
+        if [[ "$agent" == claude && "$value" == 1m ]]; then restore_window=1m
+        elif [[ "$agent" == codex && "$value" == (auto|272k|500k|1m) ]]; then restore_context="$value"; fi ;;
       isolated) [[ "$value" == (0|1) ]] && restore_isolated="$value" ;;
       source_root) [[ "$value" == /* && "$value" != *[[:cntrl:]]* ]] && recorded="$value" ;;
     esac
   done
   if [[ -z "$recorded" || "${recorded:A}" != "${source_root:A}" ]]; then
     restore_permission="" restore_approval="" restore_sandbox="" restore_network="" restore_bypass="" restore_isolated="" restore_profile="" restore_window=""
+    [[ "$agent" != codex ]] || restore_context=""
     return 1
   fi
   return 0
@@ -2345,7 +2348,7 @@ _harness_launcher_codex_restore_apply() {
   ! $hint || _harness_launcher_restore_hint codex "$restore_id" "$restore_model"
   [[ -z "$restore_model" ]] || codex_restore_args+=(-m "$restore_model")
   [[ -z "$restore_effort" ]] || codex_restore_args+=(-c "model_reasoning_effort=\"$restore_effort\"")
-  [[ -z "$restore_context" ]] || $context_explicit || HARNESS_CODEX_CONTEXT="$restore_context"
+  $context_explicit || HARNESS_CODEX_CONTEXT="${restore_context:-272k}"
   if [[ -n "$restore_bypass" ]]; then
     codex_restore_args+=(--dangerously-bypass-approvals-and-sandbox)
   else
@@ -2434,7 +2437,7 @@ _harness_launcher_run_codex_cli() {
   local profile_explicit=false
   local mcp_profile=""
   local HARNESS_CODEX_APPS_ALLOWLIST="${HARNESS_CODEX_APPS_ALLOWLIST:-}"
-  local HARNESS_CODEX_CONTEXT="272k"
+  local HARNESS_CODEX_CONTEXT="auto"
   local subcmd=""
   local use_happy=false
   local freeform=false
@@ -2494,7 +2497,7 @@ _harness_launcher_run_codex_cli() {
           shift 2
         fi
         ;;
-      272k|1m)
+      auto|272k|500k|1m)
         if $freeform; then
           codex_args+=("$1")
         else
@@ -2818,6 +2821,9 @@ _harness_launcher_complete() {
     fi
     return 0
   fi
+  if [[ "${words[omp_i]-}" == codex ]] && (( CURRENT >= omp_i + 1 )); then
+    compadd -- auto 272k 500k 1m
+  fi
   local m desc codex_surface_desc="" kiro_surface_desc=""
   local HARNESS_NAME HARNESS_PREFIX HARNESS_CODEX_GLOBAL_MCP_ALLOWLIST
   local HARNESS_MCP_SURFACE_POLICY="" mcp_surface_policy
@@ -2851,7 +2857,7 @@ _harness_launcher_complete() {
     '--no-chrome:Disable Claude in Chrome integration'
     'claude:Claude Code native (explicit selector; existing presets supported)'
     'omp:Oh My Pi fresh session or bounded login/models management (explicit, pinned)'
-    "codex:Codex CLI native (272K default · 1m opt-in · profiles${codex_surface_desc}/fork/safety)"
+    "codex:Codex CLI native (Auto default · 272k/500k/1m · profiles${codex_surface_desc}/fork/safety)"
     'codex-smoke:Send one bounded metadata-only Codex verification event'
     'checkup:Headless read-only /checkup prompt-audit at the harness root'
     "kiro-cli:Kiro CLI native${kiro_surface_desc}"

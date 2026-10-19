@@ -388,7 +388,7 @@ def _valid_grants(grants):
                'approval':('untrusted','on-failure','on-request','never'),
                'sandbox':('read-only','workspace-write','danger-full-access'),
                'network':('disabled','enabled'),
-               'bypass':('1',),'profile':('fast','base','sol','astra','plan','rich'),'context':('272k','1m')}
+               'bypass':('1',),'profile':('fast','base','sol','astra','plan','rich'),'context':('auto','272k','500k','1m')}
     seen = set()
     for grant in grants['codex']:
         if (not isinstance(grant, dict) or set(grant)-allowed or not isinstance(grant.get('native_id'),str)

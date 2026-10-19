@@ -752,10 +752,35 @@ out.mkdir(parents=True, exist_ok=True)
         with mock.patch.dict(os.environ, {"HARNESS_CODEX_CONTEXT": "1m"}):
             self.prepare()
             with (self.codex_home / "config.toml").open("rb") as stream:
-                self.assertEqual(tomllib.load(stream)["model_context_window"], 272000)
+                self.assertNotIn("model_context_window", tomllib.load(stream))
             self.prepare(HARNESS_CODEX_CONTEXT="1m")
             with (self.codex_home / "config.toml").open("rb") as stream:
                 self.assertEqual(tomllib.load(stream)["model_context_window"], 1000000)
+
+    def test_explicit_500k_output(self):
+        self.prepare(HARNESS_CODEX_CONTEXT="500k")
+        with (self.codex_home / "config.toml").open("rb") as stream:
+            data = tomllib.load(stream)
+        self.assertEqual((data["model_context_window"], data["model_auto_compact_token_limit"]), (500000, 400000))
+
+    def test_context_modes_and_single_stale_key_are_repaired(self):
+        config_path = self.codex_home / "config.toml"
+        values = {"272k": (272000, 217600), "500k": (500000, 400000), "1m": (1000000, 414000)}
+        for mode in ("auto", "272k", "500k", "1m", "auto", "500k", "272k", "auto"):
+            self.prepare(HARNESS_CODEX_CONTEXT=mode)
+            with config_path.open("rb") as stream:
+                data = tomllib.load(stream)
+            if mode == "auto":
+                self.assertNotIn("model_context_window", data)
+                self.assertNotIn("model_auto_compact_token_limit", data)
+            else:
+                self.assertEqual((data["model_context_window"], data["model_auto_compact_token_limit"]), values[mode])
+        for key in ("model_context_window", "model_auto_compact_token_limit"):
+            config = config_path.read_text()
+            config_path.write_text(config.replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "medium"\n' + key + ' = 123'))
+            self.prepare(HARNESS_CODEX_CONTEXT="auto")
+            with config_path.open("rb") as stream:
+                self.assertNotIn(key, tomllib.load(stream))
 
     def test_homebrew_compat_and_opt_entrypoints_generate_identical_hook_paths(self):
         prefix = self.tmp / "brew"
@@ -2783,8 +2808,7 @@ out.mkdir(parents=True, exist_ok=True)
             'sandbox_mode = "danger-full-access"',
             1,
         )
-        # Mutate the launcher-owned context keys in place rather than injecting
-        # duplicates; repair must restore the cost-conscious default.
+        # Explicit-mode key mutation is covered separately; auto omits both.
         config = config.replace(
             "model_context_window = 272000", "model_context_window = 123456", 1
         )
@@ -2806,10 +2830,9 @@ out.mkdir(parents=True, exist_ok=True)
         self.assertEqual(repaired["model"], "gpt-5.6-terra")
         self.assertNotIn("approval_policy", repaired)
         self.assertNotIn("sandbox_mode", repaired)
-        # The launcher owns both keys now, so repair resets them to its values
-        # instead of dropping them.
-        self.assertEqual(repaired["model_context_window"], 272000)
-        self.assertEqual(repaired["model_auto_compact_token_limit"], 217600)
+        # Auto repair leaves both keys absent.
+        self.assertNotIn("model_context_window", repaired)
+        self.assertNotIn("model_auto_compact_token_limit", repaired)
         self.assertEqual(repaired["tools"], {"update_plan": {"enabled": True}})
         self.assertEqual(repaired["mcp_servers"]["context7"]["command"], "context7")
         self.assertEqual(
@@ -2847,7 +2870,7 @@ out.mkdir(parents=True, exist_ok=True)
         with mock.patch.dict(os.environ, warm_environment):
             self.assertFalse(
                 WARM_PROBE_MODULE.config_matches(
-                    self.codex_home, catalog, "", 272000, 217600
+                    self.codex_home, catalog, "", None, None
                 )
             )
 
@@ -2859,7 +2882,7 @@ out.mkdir(parents=True, exist_ok=True)
         with mock.patch.dict(os.environ, warm_environment):
             self.assertTrue(
                 WARM_PROBE_MODULE.config_matches(
-                    self.codex_home, catalog, "", 272000, 217600
+                    self.codex_home, catalog, "", None, None
                 )
             )
         self.prepare()

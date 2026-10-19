@@ -61,7 +61,7 @@ CHECKS = {
     "isolated": lambda v: v in {"0", "1"},
     "harness_session_id": lambda v: UUID.fullmatch(v) is not None,
     # Not a grant (it only sizes the context window), so no rank rules apply.
-    "context": lambda v: v == "1m",
+    "context": lambda v: v in {"auto", "272k", "500k", "1m"},
 }
 ORDER = ("permission", "approval", "sandbox", "network", "bypass", "profile",
          "source_root", "isolated", "harness_session_id", "context")
@@ -70,7 +70,7 @@ ENV_KEYS = {
     "network": "HARNESS_LAUNCH_NETWORK",
     "bypass": "HARNESS_LAUNCH_BYPASS", "profile": "HARNESS_LAUNCH_PROFILE",
     "source_root": "HARNESS_LAUNCH_SOURCE_ROOT", "isolated": "HARNESS_LAUNCH_ISOLATED",
-    "harness_session_id": "HARNESS_SESSION_ID",
+    "harness_session_id": "HARNESS_SESSION_ID", "context": "HARNESS_LAUNCH_CONTEXT",
 }
 CLAUDE_FLAGS = {
     "--permission": "permission", "--source-root": "source_root",

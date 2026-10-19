@@ -542,14 +542,14 @@ TS=800	SUMMARY=Codex newer work duplicate	RUNTIME=codex	SESSION=new	CODEX_PROFIL
 EOF
 EXPECTED_HISTORY="$TEST_TEMP/23b.expected"
 cat > "$EXPECTED_HISTORY" <<'EOF'
-TS=900	SUMMARY=Claude · direct · new · sonnet · high	RUNTIME=claude	PROVIDER=direct	SESSION=new	MODE=base	C_MODEL=	C_EFFORT=	PERM=default	MCP_SURFACE=full	CHROME=0	HAPPY=0	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=272k	KIRO_TRUST=0
-TS=850	SUMMARY=Claude · direct · new · haiku · low · acceptEdits · chrome · happy	RUNTIME=claude	PROVIDER=direct	SESSION=new	MODE=fast	C_MODEL=	C_EFFORT=	PERM=acceptEdits	MCP_SURFACE=full	CHROME=1	HAPPY=1	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=272k	KIRO_TRUST=0
+TS=900	SUMMARY=Claude · direct · new · sonnet · high	RUNTIME=claude	PROVIDER=direct	SESSION=new	MODE=base	C_MODEL=	C_EFFORT=	PERM=default	MCP_SURFACE=full	CHROME=0	HAPPY=0	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=auto	KIRO_TRUST=0
+TS=850	SUMMARY=Claude · direct · new · haiku · low · acceptEdits · chrome · happy	RUNTIME=claude	PROVIDER=direct	SESSION=new	MODE=fast	C_MODEL=	C_EFFORT=	PERM=acceptEdits	MCP_SURFACE=full	CHROME=1	HAPPY=1	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=auto	KIRO_TRUST=0
 TS=800	SUMMARY=Codex · new · base · 272K	RUNTIME=codex	PROVIDER=direct	SESSION=new	MODE=	C_MODEL=	C_EFFORT=	PERM=default	MCP_SURFACE=full	CHROME=0	HAPPY=0	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=272k	KIRO_TRUST=0
-TS=750	SUMMARY=Claude · direct · continue · opus[1m] · xhigh · bypassPermissions	RUNTIME=claude	PROVIDER=direct	SESSION=continue	MODE=rich	C_MODEL=	C_EFFORT=	PERM=bypassPermissions	MCP_SURFACE=full	CHROME=0	HAPPY=0	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=272k	KIRO_TRUST=0
+TS=750	SUMMARY=Claude · direct · continue · opus[1m] · xhigh · bypassPermissions	RUNTIME=claude	PROVIDER=direct	SESSION=continue	MODE=rich	C_MODEL=	C_EFFORT=	PERM=bypassPermissions	MCP_SURFACE=full	CHROME=0	HAPPY=0	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=auto	KIRO_TRUST=0
 TS=700	SUMMARY=Codex · resume · rich · 272K · never	RUNTIME=codex	PROVIDER=direct	SESSION=resume	MODE=	C_MODEL=	C_EFFORT=	PERM=default	MCP_SURFACE=full	CHROME=0	HAPPY=0	CODEX_PROFILE=rich	CODEX_SURFACE=full	CODEX_SAFETY=never	CODEX_CONTEXT=272k	KIRO_TRUST=0
 TS=600	SUMMARY=Codex · fork · fast · 272K · full-auto	RUNTIME=codex	PROVIDER=direct	SESSION=fork	MODE=	C_MODEL=	C_EFFORT=	PERM=default	MCP_SURFACE=full	CHROME=0	HAPPY=0	CODEX_PROFILE=fast	CODEX_SURFACE=full	CODEX_SAFETY=full-auto	CODEX_CONTEXT=272k	KIRO_TRUST=0
-TS=500	SUMMARY=KIRO_LIGHT_SENTINEL	RUNTIME=kiro	PROVIDER=direct	SESSION=resume	MODE=base	C_MODEL=	C_EFFORT=	PERM=default	MCP_SURFACE=light	CHROME=0	HAPPY=0	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=272k	KIRO_TRUST=1
-TS=400	SUMMARY=Kiro · new · claude-haiku-4.5 · low	RUNTIME=kiro	PROVIDER=direct	SESSION=new	MODE=fast	C_MODEL=	C_EFFORT=	PERM=default	MCP_SURFACE=full	CHROME=0	HAPPY=0	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=272k	KIRO_TRUST=0
+TS=500	SUMMARY=KIRO_LIGHT_SENTINEL	RUNTIME=kiro	PROVIDER=direct	SESSION=resume	MODE=base	C_MODEL=	C_EFFORT=	PERM=default	MCP_SURFACE=light	CHROME=0	HAPPY=0	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=auto	KIRO_TRUST=1
+TS=400	SUMMARY=Kiro · new · claude-haiku-4.5 · low	RUNTIME=kiro	PROVIDER=direct	SESSION=new	MODE=fast	C_MODEL=	C_EFFORT=	PERM=default	MCP_SURFACE=full	CHROME=0	HAPPY=0	CODEX_PROFILE=base	CODEX_SURFACE=full	CODEX_SAFETY=default	CODEX_CONTEXT=auto	KIRO_TRUST=0
 EOF
 run_seeded_tui_status $'q\n' "$OUT" "$STUB" HARNESS_KIRO_BIN="$TEST_TEMP/kirodir/my-kiro"
 [[ "$RUN_TUI_RC" -eq 0 ]] || fail "mixed history migration should reach the launchpad (rc=$RUN_TUI_RC)" "$OUT"
@@ -573,6 +573,18 @@ SECOND_HISTORY_SHA="$(shasum -a 256 "$HISTORY" | awk '{print $1}')"
   || fail 'second migration must be byte-identical' "$HISTORY"
 assert_no_migration_temps
 echo 'PASS: mixed history canonicalizes, dedupes newest-first, caps at 8, and is idempotent'
+
+# Canonicalization retains every explicitly recorded Codex context.
+: > "$HISTORY"
+for context in auto 272k 500k 1m; do
+  printf 'TS=1\tSUMMARY=old\tRUNTIME=codex\tSESSION=new\tCODEX_PROFILE=base\tCODEX_CONTEXT=%s\n' "$context" >> "$HISTORY"
+done
+run_seeded_tui_status $'q\n' "$TEST_TEMP/23b-context.out" "$TEST_TEMP/23b-context.stub" HARNESS_KIRO_BIN="$TEST_TEMP/kirodir/my-kiro"
+[[ "$RUN_TUI_RC" -eq 0 ]] || fail 'explicit context canonicalization failed' "$TEST_TEMP/23b-context.out"
+for context in auto 272k 500k 1m; do
+  grep -q "CODEX_CONTEXT=$context" "$HISTORY" || fail "canonicalization lost $context" "$HISTORY"
+done
+echo 'PASS: canonicalization preserves explicit Codex contexts'
 
 # --- 23bb. Codex-gateway migration uses configured suffix without env leaks --
 printf '%s\n' 'HARNESS_NAME="test harness"' 'HARNESS_PREFIX="test"' \

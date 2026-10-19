@@ -210,6 +210,7 @@ harness_launch_record_export_codex() {
   [ -z "$4" ] || export HARNESS_LAUNCH_BYPASS="$4"
   [ -z "$5" ] || export HARNESS_LAUNCH_PROFILE="$5"
   [ -z "${6:-}" ] || export HARNESS_LAUNCH_NETWORK="$6"
+  export HARNESS_LAUNCH_CONTEXT="${HARNESS_CODEX_CONTEXT:-auto}"
   export HARNESS_LAUNCH_SOURCE_ROOT="$1"
   export HARNESS_LAUNCH_ISOLATED=0
   [ -z "${HARNESS_SESSION_ROOT:-}" ] || HARNESS_LAUNCH_ISOLATED=1
@@ -379,7 +380,7 @@ harness_session_isolation_default_route() {
             printf '%s\n' reject; return 0 ;;
           agents|exec|e|review|login|logout|mcp|plugin|app-server|remote-control|app|completion|update|doctor|sandbox|debug|apply|a|queue|archive|delete|migrate-rollouts|unarchive|cloud|exec-server|features|help|-h|--help|-V|--version)
             printf '%s\n' legacy; return 0 ;;
-          fast|base|sol|plan|rich|astra|work|272k|1m|happy|full-auto|never|bypass)
+          fast|base|sol|plan|rich|astra|work|auto|272k|500k|1m|happy|full-auto|never|bypass)
             [ "$passthrough" = 0 ] || break ;;
           -c|--config|--enable|--disable|--remote|--remote-auth-token-env|-i|--image|-m|--model|--local-provider|-p|--profile|-s|--sandbox|-C|--cd|--add-dir|-a|--ask-for-approval|--app)
             [ "$#" -gt 0 ] && shift || { printf '%s\n' invalid; return 0; }
