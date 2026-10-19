@@ -44,15 +44,18 @@ e="$(harness_json_escape 'a\b"c')"
 
 # harness_launch_record_export_codex
 export HARNESS_LAUNCH_PERMISSION=bypassPermissions HARNESS_LAUNCH_APPROVAL=never HARNESS_LAUNCH_SANDBOX=read-only HARNESS_LAUNCH_NETWORK=enabled
+HARNESS_CODEX_CONTEXT=500k
 harness_launch_record_export_codex /r "" "" 1 sol
 [ "${HARNESS_LAUNCH_BYPASS-}" = 1 ] && [ "${HARNESS_LAUNCH_PROFILE-}" = sol ] && [ "$HARNESS_LAUNCH_SOURCE_ROOT" = /r ] \
-  && [ "$HARNESS_LAUNCH_ISOLATED" = 0 ] || fail 'codex export values'
+  && [ "$HARNESS_LAUNCH_ISOLATED" = 0 ] && [ "$HARNESS_LAUNCH_CONTEXT" = 500k ] || fail 'codex export values'
 [ -z "${HARNESS_LAUNCH_PERMISSION+x}${HARNESS_LAUNCH_APPROVAL+x}${HARNESS_LAUNCH_SANDBOX+x}${HARNESS_LAUNCH_NETWORK+x}" ] || fail 'inherited grant not dropped'
-[ "$(/usr/bin/env | grep -c '^HARNESS_LAUNCH_')" = 4 ] || fail 'codex export must reach child processes'
+[ "$(/usr/bin/env | grep -c '^HARNESS_LAUNCH_')" = 5 ] || fail 'codex export must reach child processes'
 HARNESS_SESSION_ROOT=/s harness_launch_record_export_codex /r on-request workspace-write "" ""
 [ "$HARNESS_LAUNCH_ISOLATED" = 1 ] && [ "$HARNESS_LAUNCH_APPROVAL" = on-request ] && [ -z "${HARNESS_LAUNCH_BYPASS+x}" ] || fail 'isolated export'
 harness_launch_record_export_codex /r never workspace-write "" base disabled
-[ "$HARNESS_LAUNCH_NETWORK" = disabled ] || fail 'explicit network must reach the hook'
+[ "$HARNESS_LAUNCH_NETWORK" = disabled ] && [ "$HARNESS_LAUNCH_CONTEXT" = 500k ] && [ "$HARNESS_LAUNCH_APPROVAL" = never ] && [ "$HARNESS_LAUNCH_SANDBOX" = workspace-write ] && [ "$HARNESS_LAUNCH_PROFILE" = base ] || fail 'explicit network, context and grants must reach the hook'
+HARNESS_CODEX_CONTEXT=auto harness_launch_record_export_codex /r "" "" "" base
+[ "$HARNESS_LAUNCH_CONTEXT" = auto ] || fail 'auto context must reach the hook'
 
 # harness_claude_launch_settings
 hook_of() { "$PY" -c 'import json,sys; print(json.loads(sys.argv[1])["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$1"; }
