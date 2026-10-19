@@ -1336,7 +1336,7 @@ Required-loading scopes this preparation PATH across its entry child, in-process
 readonly revalidation and CLI validator for the fixture lifetime. Cleanup restores
 the caller environment; the validation assertions and production guards are unchanged.
 
-The standard ephemeral GitHub-hosted `macos-14` job has a CI-only prerequisite
+The standard ephemeral GitHub-hosted `macos-15` job has a CI-only prerequisite
 between Homebrew installation and the unchanged strict jq proof. The dedicated
 `test/omp-ci-owned-homebrew.py` requires consistent `GITHUB_ACTIONS=true`,
 `RUNNER_ENVIRONMENT=github-hosted` and `RUNNER_OS=macOS` fields inside that trusted

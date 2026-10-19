@@ -812,7 +812,7 @@ this identifies the dispatch boundary without dumping arguments or environment.
 The required-loading fixture applies that same preparation PATH to its parent
 readonly checks and CLI validator, then restores the caller PATH at cleanup.
 
-The standard ephemeral GitHub-hosted `macos-14` CI job prepares its two
+The standard ephemeral GitHub-hosted `macos-15` CI job prepares its two
 Homebrew directory modes after dependency installation and before the strict jq
 proof. `test/omp-ci-owned-homebrew.py` preflights `/opt/homebrew` and
 `/opt/homebrew/Cellar` together, then removes only group/other write bits on
