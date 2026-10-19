@@ -730,6 +730,15 @@ cd harness-launcher
 ./test/run-all.sh
 ```
 
+The no-argument full runner retains the original 124 suite invocations in order
+and appends one partition regression (125 total). CI runs its four fixed groups
+on separate `macos-15` jobs, each still limited to 20 minutes and retaining the
+same preparation, jq, syntax and documentation checks. The required `test`
+aggregate fails unless all four jobs succeed with complete, nonoverlapping
+current-source inventory coverage. This is complete-suite partitioning, not a
+reduced test selection or a native/runtime proof. See
+[CI regression partition](docs/architecture.md#ci-regression-partition).
+
 The suite dispatches each test through its declared Bash or Zsh interpreter.
 Codex surface tests run new/unlisted cases first in a serial gate. Reviewed
 publication, signal, auth, and revocation cases then stay serial with each other

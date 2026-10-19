@@ -17,9 +17,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  regression-headless:
     runs-on: macos-15
     timeout-minutes: 20
+    env:
+      CI_PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+    outputs:
+      result: ${{ steps.regression.outputs.result }}
 
     steps:
       - name: Check out repository
@@ -64,5 +68,222 @@ jobs:
         run: npx --yes markdownlint-cli2@latest README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md 'docs/*.md' '.github/*.md'
 
       - name: Run regression suite
+        id: regression
         shell: bash
-        run: BASH_BIN="$(brew --prefix)/bin/bash" ZSH_BIN=/bin/zsh ./test/run-all.sh
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/ci-headless.json"
+          BASH_BIN="$(brew --prefix)/bin/bash" ZSH_BIN=/bin/zsh ./test/run-all.sh --ci-group headless --ci-result "$result"
+          printf 'result=%s\n' "$(cat "$result")" >> "$GITHUB_OUTPUT"
+
+  regression-shell:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      CI_PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+    outputs:
+      result: ${{ steps.regression.outputs.result }}
+
+    steps:
+      - name: Check out repository
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install runtime dependencies
+        run: |
+          brew install bash python@3.13 jq
+          echo "$(brew --prefix python@3.13)/libexec/bin" >> "$GITHUB_PATH"
+
+      # Trusted ephemeral macos-14 job only; never a local maintenance command.
+      - name: Prepare owned CI Homebrew directory modes
+        run: |
+          set -euo pipefail
+          python3 -I -S -B test/test_omp_ci_owned_homebrew.py
+          python3 -I -S -B test/test_omp_ci_owned_homebrew_errors.py
+          python3 -I -S -B test/omp-ci-owned-homebrew.py
+
+      - name: Verify source-bound jq proof and current host branch
+        run: |
+          set -euo pipefail
+          python3 -I -S -B test/test_omp_jq_ci_proof.py
+          python3 -I -S -B test/omp-jq-ci-proof.py
+
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash_bin="$(brew --prefix)/bin/bash"
+          for file in install.sh bin/*.sh test/*.sh; do
+            first_line="$(sed -n '1p' "$file")"
+            if [[ "$first_line" == *zsh* ]]; then
+              /bin/zsh -n "$file"
+            else
+              "$bash_bin" -n "$file"
+            fi
+          done
+          /bin/zsh -n bin/aliases.zsh
+
+      - name: Lint public documentation
+        run: npx --yes markdownlint-cli2@latest README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md 'docs/*.md' '.github/*.md'
+
+      - name: Run regression suite
+        id: regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/ci-shell.json"
+          BASH_BIN="$(brew --prefix)/bin/bash" ZSH_BIN=/bin/zsh ./test/run-all.sh --ci-group shell --ci-result "$result"
+          printf 'result=%s\n' "$(cat "$result")" >> "$GITHUB_OUTPUT"
+
+  regression-preservation:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      CI_PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+    outputs:
+      result: ${{ steps.regression.outputs.result }}
+
+    steps:
+      - name: Check out repository
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install runtime dependencies
+        run: |
+          brew install bash python@3.13 jq
+          echo "$(brew --prefix python@3.13)/libexec/bin" >> "$GITHUB_PATH"
+
+      # Trusted ephemeral macos-14 job only; never a local maintenance command.
+      - name: Prepare owned CI Homebrew directory modes
+        run: |
+          set -euo pipefail
+          python3 -I -S -B test/test_omp_ci_owned_homebrew.py
+          python3 -I -S -B test/test_omp_ci_owned_homebrew_errors.py
+          python3 -I -S -B test/omp-ci-owned-homebrew.py
+
+      - name: Verify source-bound jq proof and current host branch
+        run: |
+          set -euo pipefail
+          python3 -I -S -B test/test_omp_jq_ci_proof.py
+          python3 -I -S -B test/omp-jq-ci-proof.py
+
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash_bin="$(brew --prefix)/bin/bash"
+          for file in install.sh bin/*.sh test/*.sh; do
+            first_line="$(sed -n '1p' "$file")"
+            if [[ "$first_line" == *zsh* ]]; then
+              /bin/zsh -n "$file"
+            else
+              "$bash_bin" -n "$file"
+            fi
+          done
+          /bin/zsh -n bin/aliases.zsh
+
+      - name: Lint public documentation
+        run: npx --yes markdownlint-cli2@latest README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md 'docs/*.md' '.github/*.md'
+
+      - name: Run regression suite
+        id: regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/ci-preservation.json"
+          BASH_BIN="$(brew --prefix)/bin/bash" ZSH_BIN=/bin/zsh ./test/run-all.sh --ci-group preservation --ci-result "$result"
+          printf 'result=%s\n' "$(cat "$result")" >> "$GITHUB_OUTPUT"
+
+  regression-python:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      CI_PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+    outputs:
+      result: ${{ steps.regression.outputs.result }}
+
+    steps:
+      - name: Check out repository
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install runtime dependencies
+        run: |
+          brew install bash python@3.13 jq
+          echo "$(brew --prefix python@3.13)/libexec/bin" >> "$GITHUB_PATH"
+
+      # Trusted ephemeral macos-14 job only; never a local maintenance command.
+      - name: Prepare owned CI Homebrew directory modes
+        run: |
+          set -euo pipefail
+          python3 -I -S -B test/test_omp_ci_owned_homebrew.py
+          python3 -I -S -B test/test_omp_ci_owned_homebrew_errors.py
+          python3 -I -S -B test/omp-ci-owned-homebrew.py
+
+      - name: Verify source-bound jq proof and current host branch
+        run: |
+          set -euo pipefail
+          python3 -I -S -B test/test_omp_jq_ci_proof.py
+          python3 -I -S -B test/omp-jq-ci-proof.py
+
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash_bin="$(brew --prefix)/bin/bash"
+          for file in install.sh bin/*.sh test/*.sh; do
+            first_line="$(sed -n '1p' "$file")"
+            if [[ "$first_line" == *zsh* ]]; then
+              /bin/zsh -n "$file"
+            else
+              "$bash_bin" -n "$file"
+            fi
+          done
+          /bin/zsh -n bin/aliases.zsh
+
+      - name: Lint public documentation
+        run: npx --yes markdownlint-cli2@latest README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md 'docs/*.md' '.github/*.md'
+
+      - name: Run regression suite
+        id: regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/ci-python.json"
+          BASH_BIN="$(brew --prefix)/bin/bash" ZSH_BIN=/bin/zsh ./test/run-all.sh --ci-group python --ci-result "$result"
+          printf 'result=%s\n' "$(cat "$result")" >> "$GITHUB_OUTPUT"
+
+  test:
+    if: ${{ always() }}
+    needs: [regression-headless, regression-shell, regression-preservation, regression-python]
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      CI_PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+    steps:
+      - name: Check out repository
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install verifier Python
+        run: |
+          brew install python@3.13
+          echo "$(brew --prefix python@3.13)/libexec/bin" >> "$GITHUB_PATH"
+
+      - name: Verify complete regression results
+        env:
+          CI_STATUS_HEADLESS: ${{ needs.regression-headless.result }}
+          CI_STATUS_SHELL: ${{ needs.regression-shell.result }}
+          CI_STATUS_PRESERVATION: ${{ needs.regression-preservation.result }}
+          CI_STATUS_PYTHON: ${{ needs.regression-python.result }}
+          CI_RESULT_HEADLESS: ${{ needs.regression-headless.outputs.result }}
+          CI_RESULT_SHELL: ${{ needs.regression-shell.outputs.result }}
+          CI_RESULT_PRESERVATION: ${{ needs.regression-preservation.outputs.result }}
+          CI_RESULT_PYTHON: ${{ needs.regression-python.outputs.result }}
+        run: |
+          set -euo pipefail
+          [[ "$CI_STATUS_HEADLESS" == success ]] || exit 1
+          [[ "$CI_STATUS_SHELL" == success ]] || exit 1
+          [[ "$CI_STATUS_PRESERVATION" == success ]] || exit 1
+          [[ "$CI_STATUS_PYTHON" == success ]] || exit 1
+          ./test/run-all.sh --ci-verify

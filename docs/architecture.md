@@ -1397,3 +1397,48 @@ unchanged. No assertion or oracle is skipped. The old per-job fallback-host
 requirement is explicitly replaced by this historical-plus-current-branch
 contract; neither historical evidence nor pure tests prove a new whole-CI PASS.
 Root still requires normal actual CI before merge/release/install.
+
+## CI regression partition
+
+`./test/run-all.sh` without arguments still executes the full suite in its
+original order, with declared interpreters, source admission, environment,
+conditional skips and first-error status preserved. The initial partition keeps
+all 124 existing suite invocations and appends `test_run_all_partition.py` (125
+total). The four preservation suites count toward coverage even though the old
+summary did not increment its passed counter for them.
+
+CI reuses that inventory and executor through
+`./test/run-all.sh --ci-group GROUP --ci-result OWNED_FILE`. Only four literal
+groups are accepted:
+
+- `headless`: `test-harness-headless.sh` and `test-headless-target.sh`.
+- `shell`: all other default shell suites, in their existing relative order.
+- `preservation`: the existing four preservation Python suites, in order.
+- `python`: profile, MCP, remaining Python and portable-source tests, in order,
+  followed by the new partition regression.
+
+New default shell and Python entries remain covered by the same inventory; no
+independent CI allowlist may silently omit them. Each group runs serially on an
+independent `macos-15` job with its own checkout, home and temporary state and a
+20-minute limit. Every regression job retains the same pinned checkout, runtime
+bootstrap, owned Homebrew tests/preparation, source-bound jq tests/proof, shell
+syntax and documentation checks. No preparation result or fixture state is
+borrowed from another job. Existing guard, native environment and negative
+oracles remain unchanged.
+
+The original required `test` job is an `always()` aggregate with all four fixed
+regression jobs in `needs`. All four must have the literal result `success`.
+`./test/run-all.sh --ci-verify` checks the fixed typed inputs
+`CI_RESULT_HEADLESS`, `CI_RESULT_SHELL`, `CI_RESULT_PRESERVATION` and
+`CI_RESULT_PYTHON`. They must match the current run, attempt, actual execution
+checkout and source/inventory digests. A PR head is distinct from its merge
+checkout; neither may substitute for the other. Scheduled and actually completed
+IDs, including only the original permitted conditional skips, must form the
+ordered, disjoint full inventory exactly once. Missing, duplicate, extra,
+malformed, failed, cancelled, skipped-job or partial results fail closed. A PASS
+string, count alone or cached result is insufficient. The aggregate also retains
+a 20-minute limit and does not rerun the regression suites.
+
+This changes scheduling, not test scope or acceptance. Parallel completion time
+and a new whole-CI PASS require actual same-source job results; source or fake
+proof alone does not establish either, or native/provider behavior.
