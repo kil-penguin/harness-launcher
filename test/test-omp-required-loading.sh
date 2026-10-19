@@ -3,6 +3,10 @@
 # are source equal; fake file consumption does not prove native skill discovery.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Admit only the pinned synthetic default or an explicitly equal owned source.
+HARNESS_TEST_OMP_SOURCE="$(python3 -I -S -B "$ROOT/test/omp-fixture-source.py")"
+export HARNESS_TEST_OMP_SOURCE
 python3 -I -S -B - "$ROOT" <<'PYTEST'
 import hashlib, importlib.util, json, os, shlex, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path

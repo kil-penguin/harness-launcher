@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Admit only the pinned synthetic default or an explicitly equal owned source.
+HARNESS_TEST_OMP_SOURCE="$(python3 -I -S -B "$ROOT/test/omp-fixture-source.py")"
+export HARNESS_TEST_OMP_SOURCE
 BASH_BIN="${BASH_BIN:-$(command -v bash)}"
 ZSH_BIN="${ZSH_BIN:-$(command -v zsh)}"
 passed=0
@@ -71,5 +75,9 @@ for python_test in test_codex_hook_trust.py test_codex_plugin_inherit.py test_sl
   "$PYTHON_BIN" "$ROOT/test/$python_test"
   passed=$((passed + 1))
 done
+
+printf '==> portable OMP fixture source tests (%s)\n' "$PYTHON_BIN"
+"$PYTHON_BIN" -I -S -B "$ROOT/test/test_omp_fixture_source.py"
+passed=$((passed + 1))
 
 printf '\n%d test scripts passed; %d skipped.\n' "$passed" "$skipped"

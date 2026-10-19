@@ -311,9 +311,45 @@ Native must resolve its real complete inventory, validate it, consume the same
 array/bytes and complete required policy startup before readiness. Source-equal
 kernel/fake tests prove structural ingress only. Installed native loading, build
 provenance, applicable fit and restore need separate reviewed delivery/canary
-proof. For paired fixtures set `HARNESS_TEST_OMP_SOURCE` to the reviewed canonical
-core source when running required-loading and continuation suites. See
+proof. OMP structural tests use the pinned synthetic source fixture described
+below by default; an explicit paired fixture must pass the same admission. See
 [required OMP preparation](docs/architecture.md#required-omp-preparation-and-native-consumption).
+
+### OMP test source fixture
+
+`test/run-all.sh`, `test/test-omp-continuation.sh` and
+`test/test-omp-required-loading.sh` call the same test-only admission entry before
+running payload code. With `HARNESS_TEST_OMP_SOURCE` unset, it selects
+`test/fixtures/w07-source` in the current checkout. Direct execution needs no
+external harness checkout:
+
+```bash
+bash test/test-omp-continuation.sh
+bash test/test-omp-required-loading.sh
+python3 -I -S -B test/test_omp_fixture_source.py
+```
+
+To test a separate paired fixture, set `HARNESS_TEST_OMP_SOURCE` to its absolute
+physical directory. It must contain the exact allowlisted code and synthetic
+inputs, with the same manifest. Empty, relative, missing, changed or unsafe roots
+fail before payload import or child execution; there is no installed or ambient
+source fallback. The directory and files must belong to the current user, have
+no symlink components or group/world write permission, and payload files must be
+regular singlelink files with their pinned modes and hashes. A system-owned
+sticky temporary ancestor is allowed above the owned checkout/fixture.
+
+The four real source files and seven synthetic YAML inputs are pinned by
+`test/omp-fixture-policy.json`. The fixture `manifest.json` has identical bytes;
+`test/omp-fixture-source.py` pins their policy SHA-256. For a reviewed fixture
+update, update the fixed payload records (path, raw SHA-256, size and mode), write
+both JSON files identically, then update `POLICY_SHA256` in the helper and run the
+regressions in the same change. Origin/revision/digests identify test input only;
+they grant no runtime, lease, native readiness or disclosure authority.
+
+These suites execute the real compiler/template with synthetic input and owned
+fake runtimes. They prove structural source/ingress behavior with
+`ready=false, inventory_admitted=false`; actual native discovery, consumption,
+policy startup and installed compatibility require separate native verification.
 
 This is the supported command override for Orca's built-in Claude, Codex, and Kiro agent entries. It does not infer a profile from repository names or remotes; the worktree must live below its registered harness boundary.
 

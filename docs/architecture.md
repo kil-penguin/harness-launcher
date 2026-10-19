@@ -267,7 +267,9 @@ Missing/retired original C or metadata is a refusal, not permission to recreate
 or retain a workspace indefinitely. This is ordinary native execution with its
 usual history/auth/cache/provider effects, not sandbox, pre-provider live-manager
 identity, cross-host restore or full compatibility proof. Run the disposable
-fake-only checks with `bash test/test-omp-continuation.sh`; paired kernel tests
+fake-only checks with `bash test/test-omp-continuation.sh`; its default input is
+the pinned synthetic test fixture. An explicit paired fixture uses the same
+test-only admission ([fixture contract](../README.md#omp-test-source-fixture)); paired kernel tests
 must additionally cover the real Entry/dispatcher/bound-runtime composition.
 
 ### Required OMP preparation and native consumption
@@ -304,6 +306,10 @@ Each dispatch and lazy skill read needs the same live epoch/current and verified
 bytes; both reload paths close and re-admit. Fresh/resume/nested contexts cannot
 restore readiness from a receipt. Cooperative cancellation does not undo effects.
 
+The full test runner and both direct OMP structural suites admit their source
+before any payload import/child. The default fixture and an explicit
+`HARNESS_TEST_OMP_SOURCE` share the fixed code/data manifest and current filesystem
+ownership checks; the test source identity confers no runtime authority.
 Public/core tests use owned source-equal kernels and explicit fake releases/effect
 sinks. Their structural result is always `ready=false, inventory_admitted=false`;
 reading expected skill files is not native resolver/consumer evidence. Native

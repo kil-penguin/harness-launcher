@@ -1,0 +1,7 @@
+runtime_contract:
+  id: w07-synthetic-test-v1
+  source_of_truth: Synthetic portable test inputs
+  before_work:
+    - Use owned disposable test inputs
+  completion_gate:
+    - Retain structural fake-only test evidence

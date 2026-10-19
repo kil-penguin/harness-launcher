@@ -3,6 +3,10 @@
 # metadata code. No installed native CLI, real registry or credential home.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Admit only the pinned synthetic default or an explicitly equal owned source.
+HARNESS_TEST_OMP_SOURCE="$(python3 -I -S -B "$ROOT/test/omp-fixture-source.py")"
+export HARNESS_TEST_OMP_SOURCE
 python3 -I -S -B - "$ROOT" "$@" <<'PYTEST'
 import copy, fcntl, hashlib, importlib.util, json, os, shlex, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path

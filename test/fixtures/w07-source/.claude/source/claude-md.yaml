@@ -1,0 +1,6 @@
+claude_md:
+  title: Portable OMP synthetic test fixture
+  principles:
+    - Exercise unchanged source with synthetic data
+  pointers:
+    - Structural tests do not admit native inventory

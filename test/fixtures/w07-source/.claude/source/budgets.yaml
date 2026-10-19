@@ -1,0 +1,5 @@
+budgets:
+  claude_md_max_lines: 80
+  always_on_total_max_lines: 200
+  codex_agents_max_bytes: 9216
+  skill_md_max_bytes: 10000
