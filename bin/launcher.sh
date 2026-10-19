@@ -357,7 +357,7 @@ history_migrate_single_full() {
   local raw="$HISTORY_FILE.migrate.raw.$$"
   local sorted="$HISTORY_FILE.migrate.sorted.$$"
   local tmp="$HISTORY_FILE.migrate.$$"
-  local line field key ts runtime canonical ident prior count=0 duplicate
+  local line field key ts runtime canonical ident prior count=0 duplicate context_present
   local read_rc
   local fields=() idents=()
 
@@ -368,11 +368,12 @@ history_migrate_single_full() {
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
     plan_reset
+    context_present=0
     fields=()
     IFS=$'\t' read -ra fields <<< "$line"
     for field in "${fields[@]}"; do
       case "$field" in
-        ?*=*) key="${field%%=*}"; plan_apply_field "$key" "${field#*=}" ;;
+        ?*=*) key="${field%%=*}"; [ "$key" != CODEX_CONTEXT ] || context_present=1; plan_apply_field "$key" "${field#*=}" ;;
         *)
           history_migration_fail "malformed TSV field" "$raw" "$sorted" "$tmp"
           return 1 ;;
@@ -393,6 +394,7 @@ history_migrate_single_full() {
         fi ;;
       codex)
         CHOICE_MCP_SURFACE="full"; CHOICE_CODEX_SURFACE="full"
+        [ "$context_present" -ne 0 ] || CHOICE_CODEX_CONTEXT=272k
         codex_summary ;;
       kiro)
         CHOICE_CODEX_SURFACE="full"
