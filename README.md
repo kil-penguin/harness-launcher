@@ -807,6 +807,17 @@ that executable’s physical directory to its preparation subprocess; the origin
 dependency safety checks and isolated native environment remain in force. CI
 declares jq explicitly.
 
+The standard ephemeral GitHub-hosted `macos-14` CI job prepares its two
+Homebrew directory modes after dependency installation and before the strict jq
+proof. `test/omp-ci-owned-homebrew.py` preflights `/opt/homebrew` and
+`/opt/homebrew/Cellar` together, then removes only group/other write bits on
+current-uid-owned directory descriptors. Root-owned safe directories are no-ops;
+root-owned unsafe or foreign-owned directories stop the job. This prerequisite
+never weakens the production dependency checks or proves V1 success. The helper
+is exclusively for that trusted disposable job; exporting CI environment flags
+on a personal or shared machine does not authorize running it. Its synthetic
+tests use owned temporary trees and never modify the actual Homebrew prefix.
+
 For an optional local check, run `python3 -I -S -B test/omp-real-jq-binding.py`.
 It verifies actual jq bytes, manifest binding and a real synthetic query without
 native calls; a system jq result proves only that local binding. CI explicitly

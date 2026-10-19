@@ -1327,6 +1327,32 @@ unsafe-ancestor and shadow checks remain unchanged; fixture preparation PATH is
 separate from the unchanged native environment. Missing or refused jq is a setup
 failure, with no skipped oracle or native fallback.
 
+The standard ephemeral GitHub-hosted `macos-14` job has a CI-only prerequisite
+between Homebrew installation and the unchanged strict jq proof. The dedicated
+`test/omp-ci-owned-homebrew.py` requires consistent `GITHUB_ACTIONS=true`,
+`RUNNER_ENVIRONMENT=github-hosted` and `RUNNER_OS=macOS` fields inside that trusted
+job. These fields do not authenticate a local machine; this is never a personal
+or shared-installation maintenance route.
+
+It traverses the fixed `/` -> `opt` -> `homebrew` -> `Cellar` chain using retained
+no-follow directory descriptors and matched named/descriptor identity, type,
+owner and mode. Both target records are admitted before any change. Only
+`/opt/homebrew` and `/opt/homebrew/Cellar` can be mutated, solely by bound-fd
+`fchmod(before_mode & ~0o022)` for the ordinary current uid. Root-owned safe
+paths are verified no-ops; root-owned unsafe and all foreign-owned paths refuse.
+Other permission/special bits, ownership and contents are preserved; the helper
+uses no ACL-changing API, recursive operation, sudo, chown or tool copy.
+
+Fresh named/descriptor bindings and exact modes are checked before each change,
+afterward and before success. The two changes are not atomic: any mismatch or
+operation/cleanup failure stops nonzero with closed numeric before/after metadata
+and explicit changed, unattempted or unavailable state. There is no retry,
+rollback that re-adds write bits, partial PASS or continued strict proof after
+failure. No kernel compare-and-swap against arbitrary same-uid mutation is
+promised. Synthetic tests cover owned trees and injected uid/race/error
+observations; actual hosted prerequisite admission and remaining dependency
+ancestors still require new-source CI evidence. This adds no native/model proof.
+
 The portable `test/omp-real-jq-binding.py` derives its source root from its actual
 file location and reuses the admitted continuation fixture and unchanged
 production dependency preparation. Its optional local mode accepts truthful
