@@ -10,6 +10,7 @@ export HARNESS_TEST_OMP_SOURCE
 python3 -I -S -B "$ROOT/test/test_omp_required_fixture_path.py"
 python3 -I -S -B - "$ROOT" <<'PYTEST'
 import hashlib, importlib.util, json, os, shlex, shutil, subprocess, sys, tempfile, unittest
+from unittest.mock import patch
 from pathlib import Path
 
 REPO = Path(sys.argv.pop())
@@ -108,6 +109,9 @@ Path('''+repr(str(self.capture))+''').write_text(json.dumps({'policy_sha256':has
         preparation_path = ':'.join(dict.fromkeys([jq_parent, '/usr/bin', '/bin']))
         self.env = {'HOME':str(self.home),'PATH':preparation_path,'LC_ALL':'C','TERM':'dumb',
                     'HARNESS_CLAUDE_PLUGIN_MIRROR':'0','PYTHONDONTWRITEBYTECODE':'1'}
+        # Readonly in-process and CLI checks must use the entry child's PATH.
+        environment = patch.dict(os.environ, {'PATH': preparation_path})
+        environment.start(); self.addCleanup(environment.stop)
 
     def restore_home(self):
         if self.saved_home is None: os.environ.pop('HOME',None)

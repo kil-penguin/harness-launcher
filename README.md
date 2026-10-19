@@ -806,6 +806,8 @@ They select system jq first, otherwise jq from the normal test runner PATH, and
 expose only that executable’s physical directory to preparation; the original
 dependency safety checks and isolated native environment remain in force. CI
 declares jq explicitly.
+The required-loading fixture applies that same preparation PATH to its parent
+readonly checks and CLI validator, then restores the caller PATH at cleanup.
 
 The standard ephemeral GitHub-hosted `macos-14` CI job prepares its two
 Homebrew directory modes after dependency installation and before the strict jq

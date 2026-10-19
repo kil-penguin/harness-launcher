@@ -99,6 +99,31 @@ class RequiredFixturePath(unittest.TestCase):
         self.assertEqual(env,{'HOME':str(case.home),'LC_ALL':'C','TERM':'dumb',
                              'HARNESS_CLAUDE_PLUGIN_MIRROR':'0','PYTHONDONTWRITEBYTECODE':'1'})
 
+    def test_original_normal_entry_and_readonly_consumers_share_prepared_path(self):
+        # The caller sees only an owned alias to real jq. Fixture preparation
+        # must reach all three original consumers, not only the entry child.
+        with patch.dict(os.environ, {'PATH': str(self.shared)}):
+            case = self.fixture(False)
+            try:
+                self.assertNotIn(str(self.shared), os.environ['PATH'].split(':'))
+                self.assertEqual(os.environ['PATH'], case.env['PATH'])
+                case.test_normal_entry_prepares_policy_and_selected_skill_without_native_admission()
+            finally:
+                case.doCleanups()
+            self.assertEqual(os.environ['PATH'], str(self.shared))
+
+    def test_parent_preparation_path_restores_caller_after_exception(self):
+        before = dict(os.environ)
+        with patch.dict(os.environ, {'PATH': str(self.shared)}):
+            case = self.fixture(False)
+            try:
+                with self.assertRaisesRegex(RuntimeError, 'fixture cleanup control'):
+                    raise RuntimeError('fixture cleanup control')
+            finally:
+                case.doCleanups()
+            self.assertEqual(os.environ['PATH'], str(self.shared))
+        self.assertEqual(dict(os.environ), before)
+
 def load_tests(loader, tests, pattern):
     return loader.loadTestsFromTestCase(RequiredFixturePath)
 
