@@ -28,8 +28,11 @@ jobs:
 
       - name: Install runtime dependencies
         run: |
-          brew install bash python@3.13
+          brew install bash python@3.13 jq
           echo "$(brew --prefix python@3.13)/libexec/bin" >> "$GITHUB_PATH"
+
+      - name: Prove real non-system jq binding
+        run: python3 -I -S -B test/omp-real-jq-binding.py --require-non-system
 
       - name: Check shell syntax
         shell: bash

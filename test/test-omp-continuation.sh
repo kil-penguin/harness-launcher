@@ -314,7 +314,7 @@ _harness_launcher_isolated_finish() {
 shift
 _harness_launcher_run "$@"
 '''
-        env={'HOME':str(self.home),'PATH':str(self.tools)+':/usr/bin:/bin','LC_ALL':'C','TERM':'dumb',
+        env={'HOME':str(self.home),'PATH':self.preparation_path,'LC_ALL':'C','TERM':'dumb',
              'HARNESS_SESSION_STATE_HOME':str(self.state),'FIXTURE_PYTHON':sys.executable,
              'FIXTURE_EVENTS':str(self.events),'HARNESS_CLAUDE_PLUGIN_MIRROR':'0',
              'HARNESS_POST_EDIT_CODEX_SYNC':'0','HARNESS_POST_COMMIT_CODEX_SYNC':'0','TMPDIR':str(self.base)}
@@ -329,6 +329,13 @@ _harness_launcher_run "$@"
 
     def public_fixture(self, native_exit=0):
         self.tools=self.base/'tools';self.tools.mkdir();self.events=self.base/'events'
+        # Match the real bridge's system-first resolution, then admit only the
+        # selected real jq's physical directory from the normal test runner.
+        jq=shutil.which('jq',path='/usr/bin:/bin') or shutil.which('jq')
+        self.assertIsNotNone(jq,'the OMP continuation fixture requires real jq')
+        jq_parent=str(Path(jq).resolve(strict=True).parent)
+        self.preparation_path=':'.join(dict.fromkeys(
+            [str(self.tools),jq_parent,'/usr/bin','/bin']))
         for name in ('omp','claude','codex','kiro-cli','kiro'):
             tool=self.tools/name;tool.write_text('#!/bin/sh\nexit 97\n');tool.chmod(0o700)
         # Prevent even an unexpected generic branch from entering installed

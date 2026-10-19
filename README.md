@@ -800,3 +800,19 @@ still require native review; see [hook trust](docs/codex-integration.md#hook-tru
 See [the trusted preservation guide](docs/trusted-preservation.md) for the
 one-shot, native-confirmed Git preservation command, including its strict
 opt-in GitHub SSH identity binding for live remote verification.
+
+The OMP continuation fixture requires a real jq executable. It selects the
+system jq first, otherwise jq from the normal test runner PATH, and exposes only
+that executable’s physical directory to its preparation subprocess; the original
+dependency safety checks and isolated native environment remain in force. CI
+declares jq explicitly.
+
+For an optional local check, run `python3 -I -S -B test/omp-real-jq-binding.py`.
+It verifies actual jq bytes, manifest binding and a real synthetic query without
+native calls; a system jq result proves only that local binding. CI explicitly
+runs the same helper with `--require-non-system`: the unmodified system search
+must lack jq and the selected physical executable directory must be outside
+`/usr/bin` and `/bin`. A system-only host fails this required check. Only actual
+new-source CI evidence with `non_system_physical_proof=true` closes that case;
+the runner label and local system success do not. Reviewed Draft verification
+delivery may precede that CI evidence; merge, release and install remain gated.

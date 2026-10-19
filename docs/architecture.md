@@ -1320,3 +1320,20 @@ The launcher prefers visible failures over silent fallback when a boundary is am
 - isolated-session apply, verification, remote comparison, or verified readback mismatch remains a recoverable `CONFLICT`; a post-push readback outage remains `INTEGRATING` for remote-history reconciliation;
 - failed runtime-home preparation stops the selected runtime;
 - app-bundled Codex fallback requires explicit opt-in.
+
+OMP fixture dependency preparation admits one real jq directory in addition to
+the existing denial-tools and system paths. The production dependency binding,
+unsafe-ancestor and shadow checks remain unchanged; fixture preparation PATH is
+separate from the unchanged native environment. Missing or refused jq is a setup
+failure, with no skipped oracle or native fallback.
+
+The portable `test/omp-real-jq-binding.py` derives its source root from its actual
+file location and reuses the admitted continuation fixture and unchanged
+production dependency preparation. Its optional local mode accepts truthful
+system binding; CI invokes `--require-non-system` after normal tool setup and
+requires no jq in the unmodified `/usr/bin:/bin` search plus a selected physical
+parent outside those directories. Both modes verify whole jq bytes, manifest
+binding, a real synthetic query and zero native calls. Strict refusal is a
+failure, never a skipped oracle. V1 remains open until actual new-source CI
+reports `non_system_physical_proof=true`; reviewed Draft verification delivery is
+allowed before that evidence, while merge, release and install remain gated.
