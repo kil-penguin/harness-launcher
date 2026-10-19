@@ -5,9 +5,45 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from unittest.mock import patch
+
+
+def dependency_failure_diagnostic(error, dependency_code):
+    """Read only the failed guard frame's allowlisted stat snapshot, never restat."""
+    report = {
+        'schema': 'w07.dependency-failure-diagnostic/v1',
+        'stage': 'required_dependencies', 'label': error.label,
+        'snapshot_available': False, 'frames_examined': 0,
+    }
+    frame = error.__traceback__
+    while frame is not None and report['frames_examined'] < 16:
+        report['frames_examined'] += 1
+        if frame.tb_frame.f_code is dependency_code:
+            values = frame.tb_frame.f_locals
+            name, info = values.get('name'), values.get('info')
+            if name not in ('bash', 'jq', 'python3') or not isinstance(info, os.stat_result):
+                break
+            paths = {key: values.get(key) for key in ('path', 'resolved', 'node')}
+            if not all(isinstance(value, (str, Path)) for value in paths.values()):
+                break
+            paths = {key: str(value) for key, value in paths.items()}
+            uid = os.getuid()
+            report.update({
+                'snapshot_available': True, 'dependency': name,
+                'selected_path': paths['path'][:1024],
+                'resolved_path': paths['resolved'][:1024],
+                'failed_node': paths['node'][:1024],
+                'paths_truncated': any(len(value) > 1024 for value in paths.values()),
+                'stat_uid': info.st_uid, 'stat_mode': f'{stat.S_IMODE(info.st_mode):04o}',
+                'process_uid': uid, 'owner_allowed': info.st_uid in (0, uid),
+                'group_other_writable': bool(info.st_mode & 0o022),
+            })
+            break
+        frame = frame.tb_next
+    return report
 
 
 def main():
@@ -30,7 +66,16 @@ def main():
         case.public_fixture()
         system_jq = shutil.which('jq', path='/usr/bin:/bin')
         with patch.dict(os.environ, {'PATH': case.preparation_path}, clear=False):
-            dependencies = case.projection.required_dependencies()
+            try:
+                dependencies = case.projection.required_dependencies()
+            except case.projection.ProjectionError as error:
+                if error.label == 'OMP_REQUIRED_DEPENDENCY_UNSAFE':
+                    assert not case.calls.exists()
+                    diagnostic = dependency_failure_diagnostic(
+                        error, case.projection.required_dependencies.__code__)
+                    diagnostic['native_calls'] = 0
+                    print(json.dumps(diagnostic), file=sys.stderr, flush=True)
+                raise
             argv = case.projection.prepare_required(
                 str(case.profile), str(case.consumer), str(case.work),
                 str(case.binary), str(case.ns), ['--print', '--', 'literal'])
