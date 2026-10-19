@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d /private/tmp/harness-transcript-test.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
