@@ -793,7 +793,7 @@ printf 'HOME_DIR=%s\nHARNESS_ROOT=%s\nLIVE=%s\nPROFILES=%s\nRECORD=%s\nDELIVERY=
 cat > "$STUB/target-probe.sh" <<'EOF'
 #!/bin/bash
 set -a; source "$(dirname "$0")/target-probe.env"; set +a
-python3 - <<'PY'
+"$HARNESS_TARGET_PYTHON" - <<'PY'
 import errno, os, subprocess
 E = os.environ
 venv = os.path.dirname(os.path.dirname(E['HARNESS_TARGET_PYTHON']))
