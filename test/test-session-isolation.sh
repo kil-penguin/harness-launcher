@@ -78,6 +78,7 @@ git init --bare -q "$REMOTE"
 git -C "$SOURCE" add tracked.txt && git -C "$SOURCE" commit -qm source-clean
 git -C "$SOURCE" remote add origin "$REMOTE"
 git -C "$SOURCE" push -q -u origin main
+git --git-dir="$REMOTE" symbolic-ref HEAD refs/heads/main
 clean_close="$(create)"; clean_close_id="$(printf '%s\n' "$clean_close" | sed -n 's/^HARNESS_SESSION_ID=//p')"
 HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" close "$clean_close_id"
 grep -qx state=CLOSED "$STATE/sessions/$clean_close_id/journal" || { echo 'FAIL: closing a clean session must terminate it without submission'; exit 1; }
