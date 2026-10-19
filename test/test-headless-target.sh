@@ -25,6 +25,8 @@ LOCK="$TMP/run.lock"
 PROMPT="$TMP/prompt.txt"
 GHD="$TMP/gh"
 PY3="$(command -v python3)"
+# Use the fixture-selected Git inside the clean agent PATH, not Apple's shim.
+GIT_BIN="$(command -v git)"
 NAME=example-repo
 GITHUB=example-owner/example-repo
 TARGET_REMOTE="$TMP/remotes/$GITHUB.git"
@@ -421,8 +423,8 @@ case "$mode" in
   tooluv) edit 65; sed -i '' 's/package = false/package = true/' pyproject.toml; msg 'deps: tool.uv' ;;
   gitlink)
     edit 66; msg 'feat: vendor'
-    mkdir -p vendor/sub && cd vendor/sub && git init -q && printf 'x\n' > f && git add f \
-      && git -c user.name=t -c user.email=t@example.invalid commit -qm sub && cd ../.. ;;
+    (mkdir -p vendor/sub && cd vendor/sub && GIT_CONFIG_NOSYSTEM=1 "@GIT@" init -q && printf 'x\n' > f && GIT_CONFIG_NOSYSTEM=1 "@GIT@" add f \
+      && GIT_CONFIG_NOSYSTEM=1 "@GIT@" -c user.name=t -c user.email=t@example.invalid commit -qm sub) || exit "$?" ;;
   gitmodules) edit 67; printf '[submodule "x"]\n\tpath = x\n\turl = https://example.invalid/x.git\n' > .gitmodules; msg 'feat: modules' ;;
   swaproot)
     # Replace the session root with a symlink to a sandbox-denied tree.
@@ -433,7 +435,7 @@ esac
 echo '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":2}}'
 printf 'codex: %s' "$mode" > "$out"
 EOF
-sed -i '' "s|@STUB@|$STUB|; s|@MARK@|$TMP/marks|g; s|@LIVE@|$LIVE|" "$TMP/vendor/codex"
+sed -i '' "s|@STUB@|$STUB|; s|@MARK@|$TMP/marks|g; s|@LIVE@|$LIVE|; s|@GIT@|$GIT_BIN|g" "$TMP/vendor/codex"
 mkdir -p "$TMP/marks"
 printf '#!/bin/sh\n[ "$1" = --help ] || exit 64\necho FAKE-HOST-HELP\n' > "$TMP/vendor/codex-code-mode-host"
 chmod +x "$TMP/vendor/codex" "$TMP/vendor/codex-code-mode-host"
