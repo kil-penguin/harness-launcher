@@ -2,6 +2,17 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.66.0 — 2026-10-19
+
+- Default new native Codex launches to Auto, following Codex configuration and
+  model metadata without launcher-pinned context or compaction values.
+- Add explicit 500K context with automatic compaction at 400000 tokens alongside
+  the existing 272K and 1M policies, consistently across shortcuts, the TUI, and
+  Web launch plans.
+- Preserve saved context choices and legacy restore behavior. Record the selected
+  policy instead of inferring it from an observed runtime window. Generated
+  custom agent roles retain their independent 272K limits.
+
 ## 0.60.2 — 2026-10-18
 
 - Allow owned, non-group/world-writable common receipt parents for lifecycle CLI

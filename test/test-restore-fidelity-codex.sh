@@ -169,9 +169,14 @@ echo 'PASS: X7 grant only from the launch record; one exact relaunch hint otherw
 # X8: context mode restored unless a keyword already chose one.
 rollout gpt-6.1-sol medium '{"type":"event_msg","payload":{"info":{"model_context_window":950000}}}'
 run_codex "$OUT" -- resume $ID
-[[ "$(cat "$OUT.context")" == 1m ]] || fail "X8 context not restored: $(cat "$OUT.context")" "$OUT"
+[[ "$(cat "$OUT.context")" == 272k ]] || fail "X8 legacy fallback not restored: $(cat "$OUT.context")" "$OUT"
 run_codex "$OUT" -- 272k resume $ID
 [[ "$(cat "$OUT.context")" == 272k ]] || fail 'X8 explicit context keyword must win' "$OUT"
+for mode in auto 272k 500k 1m; do
+  write_record $ID HARNESS_LAUNCH_CONTEXT=$mode
+  run_codex "$OUT" -- resume $ID
+  [[ "$(cat "$OUT.context")" == "$mode" ]] || fail "X8 recorded $mode not restored" "$OUT"
+done
 echo 'PASS: X8 context mode restored'
 
 # X9: a fresh launch exports the grant it launched with (flags only).

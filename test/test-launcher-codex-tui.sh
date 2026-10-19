@@ -179,8 +179,8 @@ grep -q '^PREPARE_MCP_PROFILE:<UNSET>$' "$STUB1" || {
 grep -q '^PREPARE_GLOBAL_MCP_ALLOWLIST:tui-one,tui-two$' "$STUB1" || {
   echo "FAIL: case1 — TUI did not normalize the launcher global MCP allowlist before prepare"; cat "$STUB1"; exit 1;
 }
-grep -q '^PREPARE_CONTEXT:272k$' "$STUB1" || {
-  echo "FAIL: case1 — default Codex context must be 272k"; cat "$STUB1"; exit 1;
+grep -q '^PREPARE_CONTEXT:auto$' "$STUB1" || {
+  echo "FAIL: case1 — default Codex context must be auto"; cat "$STUB1"; exit 1;
 }
 grep -q '^MCP_PROFILE:<UNSET>$' "$STUB1" || {
   echo "FAIL: case1 — default MCP surface leaked into Codex execution"; cat "$STUB1"; exit 1;
@@ -333,11 +333,17 @@ grep -q '^MCP_PROFILE:work$' "$STUB1C" || {
 }
 echo "PASS: case1c — work MCP surface combines with any profile"
 
+STUB500="$TEST_TEMP/out500-codex.txt"
+: > "$STUB500"
+run_tui $'2\n1\n2\n1\n3\n3\n1\n' "$STUB500"
+grep -q '^PREPARE_CONTEXT:500k$' "$STUB500" || { echo "FAIL: TUI 500k"; exit 1; }
+echo "PASS: TUI 500k reaches preparation"
+
 # Case 1d: 1M is an explicit final-menu choice and reaches preparation.
 # With no Happy binary: Start(1), MCP(2), Context(3), Back(4).
 STUB1D="$TEST_TEMP/out1d-codex-1m.txt"
 : > "$STUB1D"
-run_tui $'2\n1\n2\n1\n3\n1\n' "$STUB1D"
+run_tui $'2\n1\n2\n1\n3\n3\n3\n1\n' "$STUB1D"
 grep -q '^PREPARE_CONTEXT:1m$' "$STUB1D" || {
   echo "FAIL: case1d — 1M context selection did not reach preparation"; cat "$STUB1D"; cat "$STUB1D.tui.log"; exit 1;
 }
@@ -542,6 +548,35 @@ grep -q '^PREPARE_CONTEXT:1m$' "$STUB7B" || {
 }
 rm -f "$TEST_HARNESS/.harness/launcher-history"
 echo "PASS: case7b — launch history preserves the selected context"
+
+# Old rows predate the context field; new rows retain their exact choice.
+for spec in 'resume:legacy:272k' 'new:legacy:272k' 'fork:legacy:272k' 'new:auto:auto' 'new:500k:500k' 'new:272k:272k' 'new:1m:1m'; do
+  session="${spec%%:*}"; rest="${spec#*:}"; field="${rest%%:*}"; expected="${rest##*:}"
+  stub="$TEST_TEMP/history-$session-$field"; : > "$stub"
+  printf 'TS=3\tSUMMARY=history\tRUNTIME=codex\tSESSION=%s\tCODEX_PROFILE=base' "$session" > "$TEST_HARNESS/.harness/launcher-history"
+  [[ "$field" == legacy ]] || printf '\tCODEX_CONTEXT=%s' "$field" >> "$TEST_HARNESS/.harness/launcher-history"
+  printf '\n' >> "$TEST_HARNESS/.harness/launcher-history"
+  TEST_STUB_FILE="$stub" PATH="$TEST_BIN:/usr/bin:/bin" HARNESS_CODEX_BIN="$TEST_BIN/codex" HARNESS_DIR="$TEST_HARNESS" HARNESS_NAME="test harness" \
+    bash "$TEST_LAUNCHER_BIN/launcher.sh" <<< $'3\n' > "$stub.tui.log" 2>&1 || true
+  grep -q "^PREPARE_CONTEXT:$expected$" "$stub" || { echo "FAIL: history $spec"; cat "$stub"; exit 1; }
+done
+rm -f "$TEST_HARNESS/.harness/launcher-history"
+echo "PASS: legacy and explicit context history replay"
+
+# Pre-history launcher-last migration must retain the historical default too.
+for field in legacy auto 272k 500k 1m; do
+  stub="$TEST_TEMP/migration-$field"; : > "$stub"
+  rm -f "$TEST_HARNESS/.harness/launcher-history"
+  printf 'SUMMARY=legacy\nRUNTIME=codex\nSESSION=resume\nCODEX_PROFILE=base\n' > "$TEST_HARNESS/.harness/launcher-last"
+  if [[ "$field" == legacy ]]; then expected=272k; else
+    expected="$field"; printf 'CODEX_CONTEXT=%s\n' "$field" >> "$TEST_HARNESS/.harness/launcher-last"
+  fi
+  TEST_STUB_FILE="$stub" PATH="$TEST_BIN:/usr/bin:/bin" HARNESS_CODEX_BIN="$TEST_BIN/codex" HARNESS_DIR="$TEST_HARNESS" HARNESS_NAME="test harness" \
+    bash "$TEST_LAUNCHER_BIN/launcher.sh" <<< $'3\n' > "$stub.tui.log" 2>&1 || true
+  grep -q "^PREPARE_CONTEXT:$expected$" "$stub" || { echo "FAIL: migrated history $field"; cat "$stub"; exit 1; }
+done
+rm -f "$TEST_HARNESS/.harness/launcher-history"
+echo "PASS: legacy launcher-last context migration"
 
 # Case 8: opt-in Codex has one full surface. The retired toggle must be absent,
 # prepare/exec must not receive a profile, and new history must be canonical.

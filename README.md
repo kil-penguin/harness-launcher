@@ -431,7 +431,7 @@ The same command shape works for every registered prefix:
 <prefix> ultracode               Claude Code opus[1m] + xhigh (direct only)
 <prefix> continue|resume         Claude Code session shortcut
 <prefix> light                   Claude Code with the light MCP surface (SSH-backed servers excluded)
-<prefix> codex [profile] [272k|1m] native Codex CLI; 272K default, 1M opt-in
+<prefix> codex [profile] [auto|272k|500k|1m] native Codex CLI; Auto default
 <prefix> codex --app <id> [profile]  enable one ChatGPT app for this launch only
 <prefix> codex [profile] work    native Codex CLI with the work MCP surface (any profile)
 <prefix> codex continue          Codex `resume --last`

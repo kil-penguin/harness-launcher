@@ -265,14 +265,18 @@ history_field() {
 # captured when the launchpad menu is built, so a concurrent launcher rewriting
 # the file while the menu is open cannot shift which config gets replayed.
 history_load_line() {
-  local line="$1" field key
+  local line="$1" field key context_present=0
   [ -n "$line" ] || return 1
   local fields=()
   IFS=$'\t' read -ra fields <<< "$line"
   for field in "${fields[@]}"; do
     key="${field%%=*}"
+    [ "$key" != CODEX_CONTEXT ] || context_present=1
     plan_apply_field "$key" "${field#*=}"
   done
+  if [ "$CHOICE_RUNTIME" = codex ] && [ "$context_present" -eq 0 ]; then
+    CHOICE_CODEX_CONTEXT=272k
+  fi
   [ -n "$CHOICE_RUNTIME" ]
 }
 
@@ -287,7 +291,7 @@ plan_reset() {
     CHOICE_CODEX_SURFACE="default"
   fi
   CHOICE_CODEX_SAFETY="default"
-  CHOICE_CODEX_CONTEXT="272k"
+  CHOICE_CODEX_CONTEXT="auto"
   CHOICE_KIRO_TRUST=0
   PLAN_SUMMARY=""
 }
@@ -298,10 +302,14 @@ migrate_legacy_plan() {
   [ -f "$LEGACY_PLAN_FILE" ] || return 0
   if [ ! -f "$HISTORY_FILE" ]; then
     plan_reset
-    local line ts
+    local line ts context_present=0
     while IFS= read -r line; do
+      [ "${line%%=*}" != CODEX_CONTEXT ] || context_present=1
       plan_apply_field "${line%%=*}" "${line#*=}"
     done < "$LEGACY_PLAN_FILE"
+    if [ "$CHOICE_RUNTIME" = codex ] && [ "$context_present" -eq 0 ]; then
+      CHOICE_CODEX_CONTEXT=272k
+    fi
     if [ -n "$CHOICE_RUNTIME" ]; then
       ts=$(stat -f %m "$LEGACY_PLAN_FILE" 2>/dev/null || stat -c %Y "$LEGACY_PLAN_FILE" 2>/dev/null || date +%s)
       history_save "$ts"
@@ -755,8 +763,8 @@ codex_happy_compatible() {
 }
 
 codex_summary() {
-  local context_label="272K"
-  [ "$CHOICE_CODEX_CONTEXT" = "1m" ] && context_label="1M"
+  local context_label
+  case "$CHOICE_CODEX_CONTEXT" in auto) context_label="Auto" ;; 272k) context_label="272K" ;; 500k) context_label="500K" ;; 1m) context_label="1M" ;; esac
   PLAN_SUMMARY="Codex · $CHOICE_SESSION · $CHOICE_CODEX_PROFILE · $context_label"
   [ "$CHOICE_CODEX_SURFACE" = "work" ] && PLAN_SUMMARY="$PLAN_SUMMARY · work-MCP"
   [ "$CHOICE_CODEX_SAFETY" != "default" ] && PLAN_SUMMARY="$PLAN_SUMMARY · $CHOICE_CODEX_SAFETY"
@@ -831,7 +839,11 @@ collect_codex() {
         if $HAS_HAPPY && codex_happy_compatible; then
           fopts+=("📱 Happy wrapper: $( [ "$CHOICE_HAPPY" = 1 ] && echo on || echo off )")
         fi
-        fopts+=("🧠 Context: $( [ "$CHOICE_CODEX_CONTEXT" = "1m" ] && echo "1M" || echo "272K (Recommended)" )")
+        case "$CHOICE_CODEX_CONTEXT" in
+          auto) context_label="Auto (Codex settings)" ;; 272k) context_label=272K ;;
+          500k) context_label=500K ;; 1m) context_label=1M ;;
+        esac
+        fopts+=("🧠 Context: $context_label")
         fopts+=("↩ Back")
         menu "$PLAN_SUMMARY" "${fopts[@]}" || { step=safety; continue; }
         case "$MENU_RESULT" in
@@ -848,7 +860,7 @@ collect_codex() {
           *Happy*)
             if [ "$CHOICE_HAPPY" = 1 ]; then CHOICE_HAPPY=0; else CHOICE_HAPPY=1; fi ;;
           *Context*)
-            if [ "$CHOICE_CODEX_CONTEXT" = "1m" ]; then CHOICE_CODEX_CONTEXT="272k"; else CHOICE_CODEX_CONTEXT="1m"; fi ;;
+            case "$CHOICE_CODEX_CONTEXT" in auto) CHOICE_CODEX_CONTEXT=272k ;; 272k) CHOICE_CODEX_CONTEXT=500k ;; 500k) CHOICE_CODEX_CONTEXT=1m ;; *) CHOICE_CODEX_CONTEXT=auto ;; esac ;;
           *Back*) step=safety ;;
         esac ;;
     esac

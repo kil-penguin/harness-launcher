@@ -135,6 +135,18 @@ class LaunchPlanTest(unittest.TestCase):
         self.assertEqual(result['summary']['sandbox'],'danger-full-access')
         self.assertIn('--dangerously-bypass-approvals-and-sandbox',result['args'])
 
+    def test_codex_context_modes_render_in_plan_and_recorded_grant(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve()
+            presets = [{'id': 'base', 'label': 'Base', 'model': 'fixture-model', 'effort': 'medium'}]
+            for context in ('auto', '272k', '500k', '1m'):
+                result = launch_plan.plan(source, 'codex', 'base', presets, options={'context': context})
+                self.assertEqual(result['summary']['context'], context)
+                self.assertIn(context, result['args'])
+                grant = {'source_root': str(source), 'isolated': '0', 'context': context}
+                result = launch_plan.plan(source, 'codex', 'base', presets, grant=grant)
+                self.assertEqual(result['summary']['context'], context)
+
     def test_resume_renders_preview_model_effort_and_context_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source=Path(directory).resolve();owner='11111111-2222-4333-8444-555555555555'
@@ -180,7 +192,7 @@ class LaunchPlanTest(unittest.TestCase):
             "gpt-6-luna": ["low"],
             "gpt-6-sol": ["medium"],
         })
-        self.assertEqual(result["contexts"], ["272k", "1m"])
+        self.assertEqual(result["contexts"], ["auto", "272k", "500k", "1m"])
         self.assertEqual(result["approvals"], ["on-request", "never"])
         self.assertEqual(result["sandboxes"], ["read-only", "workspace-write", "danger-full-access"])
 

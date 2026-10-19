@@ -112,6 +112,23 @@ class SessionArchiveTest(unittest.TestCase):
                 'bytes': len(index), 'sha256': hashlib.sha256(index).hexdigest(),
             }])
 
+    def test_archive_preserves_codex_context_grants(self):
+        from harness_session_archive import archive, verify
+        owner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        native = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        for context in ('auto', '272k', '500k', '1m'):
+            with self.subTest(context=context), tempfile.TemporaryDirectory() as tmp:
+                root, state, source = Path(tmp, 'root'), Path(tmp, 'state'), Path(tmp, 'source')
+                source.mkdir()
+                raw = root / '.harness' / 'codex' / 'sessions' / f'{native}.jsonl'
+                raw.parent.mkdir(parents=True)
+                raw.write_text('{"type":"session_meta","payload":{"id":"%s"}}\n' % native)
+                records = state / 'launch-records'; records.mkdir(parents=True)
+                (records / ('codex-' + native)).write_text('context=%s\nsource_root=%s\nisolated=1\nharness_session_id=%s\n' % (context, source.resolve(), owner))
+                archive(root=root, state=state, owner_id=owner, source_root=source)
+                manifest = verify(archive=state / 'archives' / owner, owner_id=owner, source_root=source)
+                self.assertEqual(manifest['grant_provenance']['codex'][0]['context'], context)
+
     def test_archive_grant_provenance_does_not_follow_later_global_record_changes(self):
         from harness_session_archive import archive, verify
 

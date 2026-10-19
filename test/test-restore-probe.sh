@@ -143,10 +143,10 @@ R="$TMP/rollout.jsonl"
   printf '{"type":"turn_context","payload":{"model":"gpt-6.1-sol","effort":"medium","approval_policy":"never","sandbox_policy":{"type":"danger-full-access"}}}\n'
 } > "$R"
 probe codex "$R"
-expect 'codex last turn_context' $'model=gpt-6.1-sol\neffort=medium\ncontext=272k'
+expect 'codex last turn_context' $'model=gpt-6.1-sol\neffort=medium'
 { cat "$R"; printf '{"type":"event_msg","payload":{"info":{"model_context_window":950000}}}\n'; } > "$TMP/r1m.jsonl"
 probe codex "$TMP/r1m.jsonl"
-expect 'codex 1m context' $'model=gpt-6.1-sol\neffort=medium\ncontext=1m'
+expect 'codex 1m context' $'model=gpt-6.1-sol\neffort=medium'
 { printf '{"type":"turn_context","payload":{"model":"-bad","effort":"minimal"}}\n'; } > "$TMP/rbad.jsonl"
 probe codex "$TMP/rbad.jsonl"; expect 'codex leading dash model, minimal effort' 'effort=minimal'
 # permissions are never read from a rollout, whatever it claims

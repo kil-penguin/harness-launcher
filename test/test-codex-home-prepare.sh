@@ -100,15 +100,11 @@ echo "PASS: AGENTS.md materialized with Codex response language supplement"
 config="$CODEX_HOME/config.toml"
 [[ -f "$config" ]] || { echo "FAIL: config.toml missing"; exit 1; }
 grep -q '^model = "gpt-5.6-terra"' "$config" || { echo "FAIL: top-level model should use Terra"; exit 1; }
-# Cost-conscious default: compact at 80% of the 272K nominal window, below the
-# 258.4K effective ceiling and the provider's >272K premium-price boundary.
-grep -q '^model_context_window = 272000$' "$config" || {
-  echo "FAIL: default model_context_window must be 272000"; exit 1;
-}
-grep -q '^model_auto_compact_token_limit = 217600$' "$config" || {
-  echo "FAIL: 272K auto-compact limit must be 217600 (80% of nominal)"; exit 1;
-}
-echo "PASS: default context uses 272K with an 80% auto-compact line"
+# Auto leaves both values to native Codex configuration.
+if grep -qE '^model_(context_window|auto_compact_token_limit) =' "$config"; then
+  echo "FAIL: auto must omit both context keys"; exit 1
+fi
+echo "PASS: default context follows Codex settings"
 
 TEST_HARNESS_1M="$TEST_TEMP/fake-harness-1m"
 mkdir -p "$TEST_HARNESS_1M"
@@ -1055,29 +1051,20 @@ assert config["features"]["context_management"] == {"experimental_mode": True}
 PY
 echo "PASS: context management follows the resolved Codex CLI 0.153.0 capability floor"
 
-grep -q '^model_context_window = 272000$' "$config3" || {
-  echo "FAIL: model_context_window missing from regenerated config"; exit 1;
-}
-grep -q '^model_auto_compact_token_limit = 217600$' "$config3" || {
-  echo "FAIL: auto-compact limit missing from regenerated config"; exit 1;
-}
-echo "PASS: context-window/auto-compact keys survive regeneration"
-
-HARNESS_CODEX_CONTEXT=1m "$PREPARE" "$TEST_HARNESS3"
-grep -q '^model_context_window = 1000000$' "$config3" || {
-  echo "FAIL: warm path reused 272K config after selecting 1M"; exit 1;
-}
-grep -q '^model_auto_compact_token_limit = 414000$' "$config3" || {
-  echo "FAIL: warm path did not apply the 1M auto-compact limit"; exit 1;
-}
-"$PREPARE" "$TEST_HARNESS3"
-grep -q '^model_context_window = 272000$' "$config3" || {
-  echo "FAIL: warm path reused 1M config after returning to 272K"; exit 1;
-}
-grep -q '^model_auto_compact_token_limit = 217600$' "$config3" || {
-  echo "FAIL: warm path did not restore the 272K auto-compact limit"; exit 1;
-}
-echo "PASS: context selection invalidates and regenerates the warm Codex home"
+for selection in 272k 500k 1m auto 500k 272k auto; do
+  HARNESS_CODEX_CONTEXT="$selection" "$PREPARE" "$TEST_HARNESS3"
+  python3.13 - "$config3" "$selection" <<'PYTEST'
+import sys, tomllib
+with open(sys.argv[1], "rb") as stream:
+    data = tomllib.load(stream)
+values = {"272k": (272000, 217600), "500k": (500000, 400000), "1m": (1000000, 414000)}
+if sys.argv[2] == "auto":
+    assert "model_context_window" not in data and "model_auto_compact_token_limit" not in data
+else:
+    assert (data["model_context_window"], data["model_auto_compact_token_limit"]) == values[sys.argv[2]]
+PYTEST
+done
+echo "PASS: all context modes repair warm generated config"
 
 grep -q '^\[marketplaces.openai-bundled\]' "$config3" || {
   echo "FAIL: openai-bundled marketplace missing"; exit 1;

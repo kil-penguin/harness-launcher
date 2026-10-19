@@ -147,8 +147,6 @@ def probe_codex(path):
         out.append("model=" + model)
     if effort:
         out.append("effort=" + effort)
-    if model and window:
-        out.append("context=" + ("1m" if window >= 500000 else "272k"))
     return out
 
 
