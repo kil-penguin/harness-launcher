@@ -136,6 +136,11 @@ with tempfile.TemporaryDirectory(prefix='omp-routing-') as tmp:
     configuration(HARNESS_OMP_BIN=str(linked));run(['omp','--version'],expected=2);configuration()
     marker.write_text(json.dumps({**owner,'asset_sha256':'0'*64}));run(['omp','--version'],expected=2);marker.write_text(json.dumps(owner))
     configuration(HARNESS_OMP_ROOT=str(root/'not-prepared'));run(['omp','--version'],expected=2);configuration()
+    # Launcher-only locator must not be supplied as an option or operand,
+    # including never-enrolled routing. No state allocation or native call.
+    for tail in [['--harness-required-bundle=/foreign'],['--harness-required-bundle','/foreign'],
+                 ['--','--harness-required-bundle=/foreign']]:
+        run(['omp',*tail],expected=2,no_allocate=True)
     # Real isolated-session helper, owner lease, cwd rebinding and finish path.
     # All repositories/history remain disposable and the native remains fake.
     subprocess.run(['git','init','-q','-b','main',str(profile)],env=env,check=True)

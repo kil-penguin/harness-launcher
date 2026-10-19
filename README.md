@@ -298,6 +298,23 @@ See [OMP entry and prepared namespace](docs/architecture.md#omp-entry-and-prepar
 and [typed host/profile enrollment](docs/architecture.md#typed-omp-hostprofile-enrollment)
 for the exact boundary and supported options.
 
+Enrolled normal OMP sessions also require the paired canonical core compiler and
+reviewed native contract `w07.required-resolver-consumer.v1`. Structural preparation
+returns `ready=false` and `inventory_admitted=false`; the launcher inserts one
+reserved `--harness-required-bundle=<physical selection.json>` before `--`.
+Caller-supplied locator/resource overrides refuse. The selected amended version
+is `18.11.3-kh.w07.1`; source revision, patch/build provenance and actual binary
+hash must match the trusted current projection. Stock `18.11.3` cannot satisfy
+schema2. Management and never-enrolled routing retain their existing behavior.
+
+Native must resolve its real complete inventory, validate it, consume the same
+array/bytes and complete required policy startup before readiness. Source-equal
+kernel/fake tests prove structural ingress only. Installed native loading, build
+provenance, applicable fit and restore need separate reviewed delivery/canary
+proof. For paired fixtures set `HARNESS_TEST_OMP_SOURCE` to the reviewed canonical
+core source when running required-loading and continuation suites. See
+[required OMP preparation](docs/architecture.md#required-omp-preparation-and-native-consumption).
+
 This is the supported command override for Orca's built-in Claude, Codex, and Kiro agent entries. It does not infer a profile from repository names or remotes; the worktree must live below its registered harness boundary.
 
 Orca-specific behavior (v0.33.0+) is described in [Orca ADE integration](docs/orca-integration.md): `CODEX_HOME` sanitization inside Orca terminals, the opt-in `HARNESS_ORCA_AGENT_HOOKS=1` Codex status hook in a harness's `config/launcher.env`, and mapping Orca's `--resume <id>` restore to isolated sessions.

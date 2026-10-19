@@ -362,6 +362,29 @@ raise SystemExit(EXIT_CODE)
         self.binary.chmod(0o555)
         marker=json.loads((self.ns/'.owner.json').read_bytes());marker['asset_sha256']=digest(self.binary)
         put(self.ns/'.owner.json',marker)
+        # Mandatory paired W07 cascade: this normal alias fixture now needs a
+        # source-equal structural kernel and an explicitly fake amended release.
+        kernel=Path(os.environ['HARNESS_TEST_OMP_SOURCE'])
+        self.release={'version':'18.11.3-kh.w07.1','source_revision':'1'*40,
+            'contract_id':'w07.required-resolver-consumer.v1','upstream_base_version':'18.11.3',
+            'upstream_base_revision':'96894a6147d8cc64b7e00ad3a7d7178fd93b9531',
+            'source_patch_sha256':'2'*64,'build_provenance_sha256':'3'*64}
+        def source_file(name,body):
+            path=self.profile/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body);path.chmod(0o600)
+        for name in ('runtime-contract.yaml','budgets.yaml','claude-md.yaml'):
+            body=(kernel/'.claude/source'/name).read_text()
+            if name=='runtime-contract.yaml':
+                body='\n'.join(line for line in body.splitlines() if 'shared_contract_release:' not in line)+'\n'
+            source_file('.claude/source/'+name,body)
+        for kind in ('agents','commands','skills'):
+            source_file('.claude/source/'+kind+'.yaml',kind+':\n  source: .claude/'+kind+'\n')
+        source_file('.claude/source/settings.yaml',
+            (kernel/'.claude/source/settings.yaml').read_text().split('\nhooks:',1)[0]+
+            '\nhooks:\n  omp_required_contract: w07.required-resolver-consumer.v1\n  omp_upstream_base_version: "18.11.3"\n'
+            '  omp_upstream_base_revision: 96894a6147d8cc64b7e00ad3a7d7178fd93b9531\n  entries:\n')
+        for name in ('core/scripts/harness_compile.py','core/scripts/omp_required_extension.ts'):
+            source_file(name,(kernel/name).read_text())
+        (self.profile/'.claude/rules').mkdir()
         self.kernel()
         (self.snapshot/'bin').chmod(0o500);self.snapshot.chmod(0o500)
 
@@ -370,13 +393,16 @@ raise SystemExit(EXIT_CODE)
         prompt='literal --resume claude "quoted"\nline two'
         self.public_shell(['--session-new','--print','--',prompt],0)
         calls=[json.loads(x) for x in self.calls.read_text().splitlines()]
-        self.assertEqual(len(calls),1);self.assertEqual(calls[0]['argv'],['--print','--session-dir',str(self.sessions),'--',prompt])
+        bundle=next((self.profile/'.harness/omp').iterdir())
+        required=['--append-system-prompt='+str(bundle/'policy.md'),'--no-extensions',
+                  '--extension='+str(bundle/'required-extension.ts'),'--harness-required-bundle='+str(bundle/'selection.json')]
+        self.assertEqual(len(calls),1);self.assertEqual(calls[0]['argv'],['--print',*required,'--session-dir',str(self.sessions),'--',prompt])
         self.assertEqual(calls[0]['cwd'],str(self.work));self.assertEqual(calls[0]['held'],[True,True])
         self.assertEqual(self.events.read_text(),'finish\n')
         self.public_shell(['--session-resume',self.h,'--print','--',prompt],0)
         calls=[json.loads(x) for x in self.calls.read_text().splitlines()]
         native=str(self.sessions/'fixture_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl')
-        self.assertEqual(calls[1]['argv'],['--print','--session-dir',str(self.sessions),'--resume',native,'--',prompt])
+        self.assertEqual(calls[1]['argv'],['--print',*required,'--session-dir',str(self.sessions),'--resume',native,'--',prompt])
         self.assertEqual(calls[1]['cwd'],str(self.work));self.assertEqual(calls[1]['held'],[True,True])
         self.assertEqual(self.events.read_text(),'finish\n')
         expected_env={'HOME':str(self.ns/'home'),'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C',

@@ -1186,7 +1186,13 @@ _harness_launcher_omp_check_args() {
   esac
   while (( $# )); do
     case "$1" in
-      --) return 0 ;;
+      --)
+        shift
+        for value in "$@"; do
+          [[ "$value" != --harness-required-bundle(|=*) ]] || return 2
+        done
+        return 0 ;;
+      --harness-required-bundle|--harness-required-bundle=*) return 2 ;;
       --model|--smol|--slow|--plan|--provider|--models|--thinking|--service-tier|--tools|--skills|--max-time)
         [[ $# -ge 2 && "$2" != -* ]] || {
           echo 'harness-launcher: OMP option requires a literal value' >&2; return 2
@@ -1222,6 +1228,25 @@ _harness_launcher_omp_projection_select() {
   HARNESS_OMP_BIN="$fields[2]"
   HARNESS_OMP_ROOT="$fields[3]"
   HARNESS_OMP_SHA256="$fields[4]"
+  omp_required_selected=true
+}
+
+# Private NUL framing preserves literal argv; this is structural preparation,
+# never native inventory or readiness proof. Keep current and both leases outside.
+_harness_launcher_omp_required_argv() {
+  local workspace="$1" python
+  shift
+  python="$(harness_python3_resolve)" || return 2
+  local -a fields
+  local framed
+  framed="$("$python" -I -S -B "$_HARNESS_LAUNCHER_BIN/harness_omp_projection.py" \
+    prepare-required "${config_root:A}" "$_HARNESS_LAUNCHER_BIN/aliases.zsh" \
+    "$workspace" "$HARNESS_OMP_BIN" "$HARNESS_OMP_ROOT" "$@")" || return 2
+  fields=("${(@0)framed}")
+  # zsh command substitution retains NULs and strips only trailing newlines.
+  [[ "${fields[1]-}" == REQUIRED_ARGV && "${fields[-2]-}" == END && "${fields[-1]-}" == '' ]] || return 2
+  fields[1]=(); fields[-1]=(); fields[-1]=()
+  omp_required_argv=("${fields[@]}")
 }
 
 # No PATH fallback or auth inheritance. Both input lanes retain this validator.
@@ -1291,6 +1316,11 @@ _harness_launcher_run_omp() (
   # Nonpublic management owns the prepared native home, not a workspace.
   local run_dir="${HARNESS_RUN_DIR:-$root/cwd}"
   [[ "${1:-}" == (login|models) ]] && run_dir="$root/cwd"
+  if [[ "${omp_required_selected:-false}" == true && "${1:-}" != (--version|--help|login|models) ]]; then
+    local -a omp_required_argv
+    _harness_launcher_omp_required_argv "$run_dir" "$@" || return 2
+    set -- "${omp_required_argv[@]}"
+  fi
   _harness_launcher_omp_native "$run_dir" "$@"
 )
 
@@ -1408,6 +1438,18 @@ PYREQUEST
     # Repeat authority/origin/header checks after IN_FLIGHT and immediately
     # before the one foreground call. No generic create/GC/owner preparation.
     _harness_launcher_omp_continuation_metadata RESOLVE "$expected_sha" "$own_nonce" >/dev/null || return 2
+    local -a omp_required_argv
+    _harness_launcher_omp_required_argv "$retained_c" "${native_options[@]}" -- "${native_prompt[@]}" || {
+      _harness_launcher_omp_continuation_metadata FINALIZE "$expected_sha" "$own_nonce" 2 >/dev/null
+      return 2
+    }
+    # Keep original options first and owned continuation flags before --.
+    # The prepared suffix contains the exact already-validated original prompt.
+    native_options=()
+    for value in "${omp_required_argv[@]}"; do
+      [[ "$value" == -- ]] && break
+      native_options+=("$value")
+    done
     if [[ "$continuation_mode" == --session-new ]]; then
       _harness_launcher_omp_native "$retained_c" "${native_options[@]}" --session-dir "$retained_s" -- "${native_prompt[@]}"
     else
@@ -1522,7 +1564,7 @@ _harness_launcher_run() {
 
   # Keep the OMP discriminator through workspace normalization. Public native
   # management returns before session/history preparation, even with controls.
-  local omp_selected=false
+  local omp_selected=false omp_required_selected=false
   if [[ "${@[selector_i]-}" == omp ]]; then
     omp_selected=true
     local -a omp_native_args=()

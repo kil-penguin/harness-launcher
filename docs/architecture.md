@@ -270,6 +270,47 @@ identity, cross-host restore or full compatibility proof. Run the disposable
 fake-only checks with `bash test/test-omp-continuation.sh`; paired kernel tests
 must additionally cover the real Entry/dispatcher/bound-runtime composition.
 
+### Required OMP preparation and native consumption
+
+For enrolled normal sessions, preparation runs inside the original workspace and
+namespace leases after current validation, including continuation RESOLVE. It
+selects registered source/profile, actual B/N/cwd and stable current provenance;
+the compiler alone emits immutable `.harness/omp/<selection-sha>/` assets. The
+structural API returns a non-ready prepared expectation and preserves argv value
+and terminator boundaries. Only the launcher inserts one reserved manifest
+locator. The original environment remains exactly13 fields. Continuation keeps
+its owned session-dir/resume flags, original literal prompt and terminal handling;
+its strict release validator shares the projection's amended-release schema.
+
+Schema2 binds contract `w07.required-resolver-consumer.v1`, exact amended version
+`18.11.3-kh.w07.1`, reviewed native source revision/patch/build provenance and actual
+binary SHA separately from upstream base18.11.3/rev96894. These metadata are part
+of the existing trusted publisher's selected binary release, not self-reported
+capabilities or new authority. No stock fallback or config repair is performed.
+The private `validate-required-prepared(source, consumer, workspace, B, N,
+bundle_manifest)` helper verb re-derives canonical expectations under real current
+selection and checks existing assets without writing or running native. Native
+must verify the managed launcher/current/helper/interpreter closure before it
+invokes that helper; a manifest-named executable or locator is not trusted by itself.
+
+Actual inventory admission belongs to the native producer: original resolver,
+full settings/filter/collision semantics, exact tuple multiset and actual raw byte
+readset. That admitted array and each element must reach the existing production
+consumer unchanged. The schema2 bridge supplies no skillPaths callback producer.
+It checks native read-only consumed status/selection/manifest/session/epoch before
+policy startup. Native independently requires the exact required handler's
+successful completion and absence of error/abort/shutdown before opening ready.
+Each dispatch and lazy skill read needs the same live epoch/current and verified
+bytes; both reload paths close and re-admit. Fresh/resume/nested contexts cannot
+restore readiness from a receipt. Cooperative cancellation does not undo effects.
+
+Public/core tests use owned source-equal kernels and explicit fake releases/effect
+sinks. Their structural result is always `ready=false, inventory_admitted=false`;
+reading expected skill files is not native resolver/consumer evidence. Native
+source tests and later build/delivery/installed caps/normal40/privacy/restore and
+actual effect0/1 canary remain separate gates. Caps/codecs/receiver1000 and original
+149-3/source6 boundaries are unchanged; raw aggregate bytes are not wire-fit proof.
+
 ### Typed OMP host/profile enrollment
 
 The internal `bin/harness_omp_projection.py` reader runs only for an OMP

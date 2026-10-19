@@ -162,9 +162,7 @@ def checked_context(value):
     keys(value['namespace_identity'], 'dev ino uid mode')
     for item in value['namespace_identity'].values(): number(item)
     require(value['namespace_identity']['mode'] == 0o700)
-    p.keys(value['binary_release'], 'version source_revision')
-    p.text(value['binary_release']['version'])
-    require(re.fullmatch('[0-9a-f]{40}', value['binary_release']['source_revision']))
+    p.check_binary_release(value['binary_release'])
     return value
 
 
