@@ -39,8 +39,11 @@ jobs:
           python3 -I -S -B test/test_omp_ci_owned_homebrew_errors.py
           python3 -I -S -B test/omp-ci-owned-homebrew.py
 
-      - name: Prove real non-system jq binding
-        run: python3 -I -S -B test/omp-real-jq-binding.py --require-non-system
+      - name: Verify source-bound jq proof and current host branch
+        run: |
+          set -euo pipefail
+          python3 -I -S -B test/test_omp_jq_ci_proof.py
+          python3 -I -S -B test/omp-jq-ci-proof.py
 
       - name: Check shell syntax
         shell: bash

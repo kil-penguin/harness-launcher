@@ -825,10 +825,31 @@ tests use owned temporary trees and never modify the actual Homebrew prefix.
 
 For an optional local check, run `python3 -I -S -B test/omp-real-jq-binding.py`.
 It verifies actual jq bytes, manifest binding and a real synthetic query without
-native calls; a system jq result proves only that local binding. CI explicitly
-runs the same helper with `--require-non-system`: the unmodified system search
-must lack jq and the selected physical executable directory must be outside
-`/usr/bin` and `/bin`. A system-only host fails this required check. Only actual
-new-source CI evidence with `non_system_physical_proof=true` closes that case;
-the runner label and local system success do not. Reviewed Draft verification
-delivery may precede that CI evidence; merge, release and install remain gated.
+native calls. Its unchanged `--require-non-system` mode requires jq absent from
+`/usr/bin:/bin` and a selected physical parent outside those directories; a
+system host still returns `REFUSED`, reason `NON_SYSTEM_JQ_REQUIRED`, exit 2.
+
+CI runs the pure `test/test_omp_jq_ci_proof.py` tests and the test-only
+`test/omp-jq-ci-proof.py` validator after normal dependency setup. The validator
+pins the public-safe `test/fixtures/omp-jq-v1-093-evidence.json` capsule: actual
+job 118160822054 at source `093f664de2647f358eb24c059f991a5f16ae6956`
+proved real non-system selection, complete manifest/hash binding, query exit 0
+and native calls 0. This satisfies V1's historical actual-evidence condition,
+only while the nine inspected producer/admission/policy/source pins match.
+Changed relevant source fails reuse; capsule metadata grants no authority.
+
+Every current CI invokes the unchanged inspector ordinarily, then strictly.
+A real system result must pass ordinary binding and produce the exact strict
+refusal above, reported as `SYSTEM` / `REFUSAL_VERIFIED` with
+`current_non_system_physical_proof=false`. An actual non-system result must
+pass both calls and is reported as `NON_SYSTEM` / `FALLBACK_VERIFIED` / true.
+No historical binary hash is imposed on a different current host. Each result
+retains all original binding/query/no-native assertions and both calls must
+agree on selected tool facts. Neither `exit 2` nor another failure is ignored.
+Malformed or oversized output, any stderr, timeout or mismatch fails without
+logging raw child JSON. The 8192-byte per-stream accepted-output limit and
+60-second per-call timeout claim no streaming or descendant containment.
+Original guards, source admission, owned permissions, syntax/docs/full suites
+and the 20-minute CI job budget remain unchanged. Historical fallback evidence
+is not current fallback or whole-CI success; new actual CI remains required
+before the normal merge/release/install decision.

@@ -1364,11 +1364,36 @@ ancestors still require new-source CI evidence. This adds no native/model proof.
 
 The portable `test/omp-real-jq-binding.py` derives its source root from its actual
 file location and reuses the admitted continuation fixture and unchanged
-production dependency preparation. Its optional local mode accepts truthful
-system binding; CI invokes `--require-non-system` after normal tool setup and
-requires no jq in the unmodified `/usr/bin:/bin` search plus a selected physical
-parent outside those directories. Both modes verify whole jq bytes, manifest
-binding, a real synthetic query and zero native calls. Strict refusal is a
-failure, never a skipped oracle. V1 remains open until actual new-source CI
-reports `non_system_physical_proof=true`; reviewed Draft verification delivery is
-allowed before that evidence, while merge, release and install remain gated.
+production dependency preparation. Its ordinary mode accepts truthful system
+binding; its unchanged `--require-non-system` mode requires no jq in the
+unmodified `/usr/bin:/bin` search and a physical parent outside those directories.
+Both modes check whole jq bytes, all manifest bindings, a real synthetic query
+and native calls 0. A system host still strictly returns
+`REFUSED/NON_SYSTEM_JQ_REQUIRED`, exit 2; this is not a fallback PASS.
+
+CI's `test/omp-jq-ci-proof.py` checks a frozen, public-safe actual093 evidence
+capsule at `test/fixtures/omp-jq-v1-093-evidence.json` and nine whole source pins.
+Job 118160822054 at `093f664de2647f358eb24c059f991a5f16ae6956` actually
+proved non-system selection/manifest/query/native0, satisfying V1's historical
+evidence condition for the unchanged source closure. Its log/line/source digests
+are retained; private preparation paths, dependency lists and raw logs/auth are
+excluded. Source changes fail historical reuse, not silently refresh it.
+
+After pure `test/test_omp_jq_ci_proof.py`, each current CI runs the original
+inspector ordinarily then strictly, without a shell or retry. Actual system
+binding requires strict exit2 with the exact refusal and is honestly reported
+`SYSTEM/REFUSAL_VERIFIED/current_non_system_physical_proof=false`. Actual
+non-system binding requires ordinary and strict exit0/PASS and is reported
+`NON_SYSTEM/FALLBACK_VERIFIED/true`. Every result retains exact types,
+selected/physical/hash/manifest/query/native0/copy=false/replacement=false checks;
+selected tool facts must be stable across calls. Historical and current host
+binary hashes need not equal. Ordinary failure short-circuits strict; all
+unexpected output, stderr, exceptions, timeout and mismatch fail closed.
+Only bounded statuses/digests are logged. Each stream has an 8192-byte
+accepted-output limit and each call a 60-second timeout, without a streaming
+memory or process-descendant containment claim. Source4, guards, native env,
+owned permissions, original syntax/docs/full suites and 20-minute job remain
+unchanged. No assertion or oracle is skipped. The old per-job fallback-host
+requirement is explicitly replaced by this historical-plus-current-branch
+contract; neither historical evidence nor pure tests prove a new whole-CI PASS.
+Root still requires normal actual CI before merge/release/install.
