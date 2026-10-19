@@ -587,6 +587,9 @@ cat > "$TMP/failgit/git" <<EOF
 #!/bin/bash
 pattern="\$(cat "$TMP/fail-git" 2>/dev/null)"
 if [[ -n "\$pattern" && " \$* " == *"\$pattern"* ]]; then echo "injected git failure: \$pattern" >&2; exit 128; fi
+# System config is host data outside this hermetic fixture.
+# Preserve the verifier's generated GIT_CONFIG_GLOBAL identity.
+export GIT_CONFIG_NOSYSTEM=1
 exec "$(command -v git)" "\$@"
 EOF
 chmod +x "$TMP/failgit/git"
