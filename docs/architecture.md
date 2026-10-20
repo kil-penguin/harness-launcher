@@ -664,7 +664,9 @@ options behaves exactly as before.
   fresh `/private/tmp/hh-*` directory (0700, owned by the user, short enough
   for Claude's per-uid socket directory), so the shared
   `/private/tmp/claude-<uid>` can stay write-denied. That directory is
-  removed before delivery and on every exit path. With `HARNESS_HEADLESS=1` the launcher does not
+  removed before delivery and on every exit path. The durable interactive base
+  `${XDG_STATE_HOME:-$HOME/.local/state}/cct` is added to the sandbox `denyWrite`
+  list (and the edit tools), so a run cannot touch other sessions' scratchpads. With `HARNESS_HEADLESS=1` the launcher does not
   export the harness `.claude/settings.local.json` `env` block, does not derive
   a per-harness `GH_TOKEN`, and passes no `--mcp-config`.
 - **Session.** It calls `harness-exec <harness> --isolated --passthrough ...`,
@@ -1249,6 +1251,20 @@ sandbox grant from a launch record. The two sources have different trust:
   does not stop a process running as the same user from writing the file, exactly
   like every other file in the state directory.
 
+A Codex history import (`codex resume <id>` that creates a fresh isolated session
+from durable history) restores the origin's grant too, but only through the catalog
+row: the launcher re-selects the row, takes `origin_state_home` from it (never from
+the environment), reads `launch-records/codex-<id>` only in that one state home, and
+accepts the record only when its `source_root` matches and it is bound to the row's
+origin (`isolated=0` for a canonical row; otherwise `isolated=1` and a
+`harness_session_id` equal, ignoring case, to the row's isolation id). It is applied
+only for a top-level launch (`harness_launch_context.py top-level`: a terminal in the
+foreground, no agent marker in the environment, a complete process ancestry without
+`claude`, `codex` or `node`). A nested launch, an unbound record or an unconfigured
+origin keeps the default permissions and prints the relaunch hint. The record is a
+same-user file: this blocks accidental or trivial carry-over, not a hostile
+same-user process.
+
 Three details keep the record honest. A Claude hook takes its grant as command
 arguments inside the launcher's `--settings`, never from the environment, because
 Claude applies the agent-writable `env` block of `.claude/settings.local.json`.
@@ -1265,6 +1281,22 @@ isolated session): an isolated owner still wins. The nesting rule stops accident
 agent: a same-user process can still write the record file directly, double-fork so it
 is reparented to launchd, or type the launch into a pane shell (herdr, tmux, osascript),
 and each of these counts as top-level. That stays the documented same-user boundary.
+
+### Durable Claude scratchpad
+
+Interactive launcher Claude (the shortcut path and the picker; not headless) gets
+`CLAUDE_CODE_TMPDIR=${XDG_STATE_HOME:-$HOME/.local/state}/cct` in Claude's own
+environment when the variable is unset, so session scratchpads (otherwise under
+`/private/tmp/claude-<uid>`, which macOS clears at boot) survive a reboot. The
+launcher never exports it to the user's shell and never overrides a preset value.
+It sets the variable only when the base path is at most 40 bytes (Claude's
+per-session sockets live below it and `AF_UNIX` paths are short), the directory is
+created or tightened to 0700, is owned by the user, is not a symlink, and a write
+probe succeeds; otherwise Claude keeps its default. The launcher also creates
+`.metadata_never_index` there and runs `tmutil addexclusion` once (best effort).
+There is no launcher cleanup: Claude's retention sweep removes a session's
+scratchpad together with its transcript, so expect the directory to grow with
+long-lived sessions.
 
 Known limits, kept on purpose:
 

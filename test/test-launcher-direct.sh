@@ -43,6 +43,7 @@ cat > "$CLAUDE_STUB" <<'EOF'
 # Stub claude: capture all args and env vars to a file
 echo "ARGS:$@" >> "$TEST_STUB_FILE"
 echo "EFFORT:${CLAUDE_CODE_EFFORT_LEVEL:-}" >> "$TEST_STUB_FILE"
+echo "CCT:${CLAUDE_CODE_TMPDIR-<unset>}" >> "$TEST_STUB_FILE"
 [[ "${TEST_CLAUDE_MCP_TOKEN:-}" == fixture-token ]] && echo "MCP_AUTH:loaded" >> "$TEST_STUB_FILE"
 exit 0
 EOF
@@ -436,5 +437,69 @@ grep -q '^HARNESS_PREFIX:test$' "$tui_stub_log" || {
   exit 1
 }
 echo "PASS: no-argument launchpad receives the short harness prefix"
+
+# F: durable scratchpad. Interactive Claude gets CLAUDE_CODE_TMPDIR=<state>/cct
+# in its own environment only; a preset value is kept; an unsafe or too long
+# base leaves the variable unset. tmutil is a stub so no real exclusion is made.
+CCT_ROOT="$(mktemp -d /tmp/hlcct.XXXXXX)"
+trap 'chmod -R u+rwx "$CCT_ROOT" 2>/dev/null; rm -rf "$CCT_ROOT"; cleanup' EXIT
+mkdir -p "$CCT_ROOT/bin" "$CCT_ROOT/home"
+cat > "$CCT_ROOT/bin/tmutil" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$CCT_TMUTIL_LOG"
+EOF
+chmod +x "$CCT_ROOT/bin/tmutil"
+run_cct() {  # <xdg-state-home> [ENV=value ...]; prints the stub CCT line
+  local xdg="$1"; shift
+  local out="$CCT_ROOT/out.txt"
+  rm -f "$out"
+  (
+    export TEST_STUB_FILE="$out" CCT_TMUTIL_LOG="$CCT_ROOT/tmutil.log" HOME="$CCT_ROOT/home"
+    export PATH="$CCT_ROOT/bin:$TEST_TEMP:$PATH" XDG_STATE_HOME="$xdg"
+    unset CLAUDE_CODE_TMPDIR
+    local pair preset=0; for pair in "$@"; do export "$pair"; [[ "$pair" == CLAUDE_CODE_TMPDIR=* ]] && preset=1; done
+    source "$LAUNCHER_DIR/bin/aliases.zsh"
+    _harness_launcher_run "$TEST_HARNESS" base
+    # never exported to the user's interactive shell
+    [[ "$preset" == 1 || -z "${CLAUDE_CODE_TMPDIR:-}" ]] || exit 9
+  ) >/dev/null 2>&1 || { echo "FAIL: F launch failed or leaked the variable" >&2; exit 1; }
+  grep '^CCT:' "$out" | head -1
+}
+XS="$CCT_ROOT/s"; mkdir -p "$XS"
+[[ "$(run_cct "$XS")" == "CCT:$XS/cct" ]] || { echo "FAIL: F unset -> $XS/cct"; exit 1; }
+[[ "$(stat -f %Lp "$XS/cct")" == 700 && -O "$XS/cct" ]] || { echo 'FAIL: F base must be 0700 and owned'; exit 1; }
+[[ -e "$XS/cct/.metadata_never_index" ]] || { echo 'FAIL: F missing .metadata_never_index'; exit 1; }
+[[ "$(cat "$CCT_ROOT/tmutil.log")" == "addexclusion $XS/cct" ]] || { echo 'FAIL: F tmutil addexclusion once'; cat "$CCT_ROOT/tmutil.log"; exit 1; }
+run_cct "$XS" >/dev/null
+[[ "$(wc -l < "$CCT_ROOT/tmutil.log" | tr -d ' ')" == 1 ]] || { echo 'FAIL: F tmutil must run only once'; exit 1; }
+echo "PASS: F unset -> durable base, 0700, never-index, tmutil once, not exported to the shell"
+
+XP="$CCT_ROOT/p"; mkdir -p "$XP"
+[[ "$(run_cct "$XP" CLAUDE_CODE_TMPDIR=/preset/dir)" == "CCT:/preset/dir" ]] || { echo 'FAIL: F preset value must be preserved'; exit 1; }
+[[ ! -e "$XP/cct" ]] || { echo 'FAIL: F created the base despite a preset value'; exit 1; }
+echo "PASS: F preset CLAUDE_CODE_TMPDIR preserved"
+
+XL="$CCT_ROOT/l"; mkdir -p "$XL" "$CCT_ROOT/elsewhere"; ln -s "$CCT_ROOT/elsewhere" "$XL/cct"
+[[ "$(run_cct "$XL")" == "CCT:<unset>" ]] || { echo 'FAIL: F symlinked base must leave the variable unset'; exit 1; }
+XF="$CCT_ROOT/f"; mkdir -p "$XF"; : > "$XF/cct"
+[[ "$(run_cct "$XF")" == "CCT:<unset>" ]] || { echo 'FAIL: F non-directory base must leave the variable unset'; exit 1; }
+XW="$CCT_ROOT/w"; mkdir -p "$XW/cct"; chmod 755 "$XW/cct"
+[[ "$(run_cct "$XW")" == "CCT:$XW/cct" && "$(stat -f %Lp "$XW/cct")" == 700 ]] || { echo 'FAIL: F existing wide base must be tightened to 0700'; exit 1; }
+echo "PASS: F symlink / non-directory base unset; wide base tightened"
+
+XLONG="$CCT_ROOT/$(printf 'x%.0s' {1..40})"; mkdir -p "$XLONG"
+[[ "$(run_cct "$XLONG")" == "CCT:<unset>" && ! -e "$XLONG/cct" ]] || { echo 'FAIL: F base longer than 40 bytes must stay unset'; exit 1; }
+echo "PASS: F long base unset"
+
+XR="$CCT_ROOT/r"; mkdir -p "$XR"; chmod 500 "$XR"
+[[ "$(run_cct "$XR")" == "CCT:<unset>" ]] || { chmod 700 "$XR"; echo 'FAIL: F unwritable state home must not export'; exit 1; }
+chmod 700 "$XR"
+echo "PASS: F unwritable state home unset, launch still succeeds"
+
+# Headless never gets the durable base; the picker path (launcher.sh) calls the helper.
+( source "$LAUNCHER_DIR/bin/harness-common.sh"; HARNESS_HEADLESS=1 XDG_STATE_HOME="$XS" harness_claude_export_durable_tmpdir; [[ -z "${CLAUDE_CODE_TMPDIR:-}" ]] ) \
+  || { echo 'FAIL: F headless must not set the durable base'; exit 1; }
+grep -q 'harness_claude_export_durable_tmpdir' "$LAUNCHER_DIR/bin/launcher.sh" || { echo 'FAIL: F launcher.sh must export the durable base'; exit 1; }
+echo "PASS: F headless skipped; picker path wired"
 
 echo "✓ All direct OAuth tests passed"

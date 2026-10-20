@@ -1143,6 +1143,8 @@ launch_claude() {
   launch_banner "$PLAN_SUMMARY" "$exe" "${banner_args[@]}"
   harness_claude_cmux_broker_start "$LAUNCHER_BIN_DIR/codex-cmux-title-sync.py" "$HARNESS_DIR"
   local HARNESS_SLACK_ARGV=()
+  # launcher.sh is its own process; the variable reaches only Claude.
+  harness_claude_export_durable_tmpdir
   if [ "$exe" = "claude" ]; then
     harness_slack_claude_argv "$LAUNCHER_BIN_DIR/slack-approval-policy.py" "${args[@]}" || return $?
     args=("${HARNESS_SLACK_ARGV[@]}")

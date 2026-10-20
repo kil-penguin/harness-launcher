@@ -717,11 +717,36 @@ def catalog_value(args, keep_private=False):
     if native_id:
         if not UUID.fullmatch(native_id):refuse("invalid selected native UUID")
         entries=[row for row in entries if row['native_id'].lower()==native_id.lower()]
-    rows=dedupe_entries(entries,current/'native-history',keep_private)
+    rows=dedupe_entries(entries,current/'native-history',True)
+    pools=[current]+([Path(legacy)] if legacy and Path(legacy)!=current else [])
     for row in rows:
         if incomplete_hints or row['native_id'].lower() in held_ids:
             row.update(status='ambiguous',reason='unverified_native_owner_hints_incomplete' if incomplete_hints else 'unverified_native_owner')
+        row['origin_state_home']=origin_state_home(row,source,pools,Path(legacy) if legacy else None)
+    if not keep_private:rows=[{key:value for key,value in row.items() if not key.startswith('_')} for row in rows]
     return {'schema_version':1,'entries':rows,'warnings':warnings}
+
+
+def origin_state_home(row,source,pools,legacy):
+    """State home that owns the launch record of this row's origin, or ''.
+
+    Live row: P of <P>/worktrees/<id>/.harness/codex. Snapshot row: the same rule
+    on the manifest source. Canonical origin: the legacy XDG home. P must equal
+    exactly one configured pool; anything else grants nothing."""
+    try:
+        if row['status']=='canonical':origin=source/'.harness/codex'
+        elif row['status']=='snapshot':origin=Path(row['_source_home'])
+        else:origin=Path(row['home'])
+        if origin==source/'.harness/codex':
+            return str(legacy) if legacy is not None else ''
+        isolation=row.get('isolation_id') or ''
+        if not UUID.fullmatch(isolation):return ''
+        if origin.name!='codex' or origin.parent.name!='.harness' or origin.parent.parent.name!=isolation or origin.parent.parent.parent.name!='worktrees':return ''
+        pool=origin.parent.parent.parent.parent
+        matches=[p for p in pools if p==pool]
+        return str(matches[0]) if len(matches)==1 else ''
+    except (KeyError,TypeError,ValueError):
+        return ''
 
 
 def binding_origin(state, identifier, source):

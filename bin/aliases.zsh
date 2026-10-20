@@ -295,7 +295,7 @@ elif uuid.fullmatch(mode):
 else:
     raise SystemExit(2)
 row = entries[0]
-for key in ("native_id", "home", "source_root", "isolation_id", "origin_runtime", "snapshot_id", "updated_at", "status", "reason"):
+for key in ("native_id", "home", "source_root", "isolation_id", "origin_runtime", "snapshot_id", "updated_at", "status", "reason", "origin_state_home"):
     value = row.get(key)
     if value is not None and (not isinstance(value, str) or "\n" in value or "\r" in value):
         raise SystemExit(2)
@@ -464,9 +464,10 @@ _harness_launcher_restore_probe() {
 #   grant) and restore_isolated from the launch record, only when it
 #   names this harness root. Returns 1 (all empty) without a usable record.
 _harness_launcher_restore_launch_record() {
-  local agent="$1" id="$2" source_root="$3" py out line key value recorded=""
+  local agent="$1" id="$2" source_root="$3" bound_state="${4:-}" bound_isolation="${5:-}"
+  local py out line key value recorded="" recorded_session=""
   local helper="$_HARNESS_LAUNCHER_BIN/harness-launch-record"
-  local state_home="${HARNESS_SESSION_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher}"
+  local state_home="${bound_state:-${HARNESS_SESSION_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher}}"
   restore_permission="" restore_approval="" restore_sandbox="" restore_network="" restore_bypass="" restore_isolated="" restore_profile="" restore_window=""
   [[ -f "$helper" ]] || return 1
   py="$(harness_python3_resolve 2>/dev/null)" || return 1
@@ -486,14 +487,66 @@ _harness_launcher_restore_launch_record() {
         elif [[ "$agent" == codex && "$value" == (auto|272k|500k|1m) ]]; then restore_context="$value"; fi ;;
       isolated) [[ "$value" == (0|1) ]] && restore_isolated="$value" ;;
       source_root) [[ "$value" == /* && "$value" != *[[:cntrl:]]* ]] && recorded="$value" ;;
+      harness_session_id) [[ "$value" =~ $_HARNESS_LAUNCHER_UUID_RE ]] && recorded_session="${(L)value}" ;;
     esac
   done
-  if [[ -z "$recorded" || "${recorded:A}" != "${source_root:A}" ]]; then
+  # A bound read (history import) also needs the record to belong to the row's
+  # origin: the canonical checkout (isolated=0) or exactly that isolated session.
+  local binding_ok=true
+  if [[ -n "$bound_isolation" ]]; then
+    if [[ "$bound_isolation" == canonical ]]; then
+      [[ "$restore_isolated" == 0 ]] || binding_ok=false
+    else
+      [[ "$restore_isolated" == 1 && -n "$recorded_session" && "$recorded_session" == "${(L)bound_isolation}" ]] || binding_ok=false
+    fi
+  fi
+  if ! $binding_ok || [[ -z "$recorded" || "${recorded:A}" != "${source_root:A}" ]]; then
     restore_permission="" restore_approval="" restore_sandbox="" restore_network="" restore_bypass="" restore_isolated="" restore_profile="" restore_window=""
     [[ "$agent" != codex ]] || restore_context=""
     return 1
   fi
   return 0
+}
+
+# _harness_launcher_restore_launch_record_bound <agent> <id> <source-root> <state-home> <isolation-id|canonical>
+#   The record is read only from <state-home> and accepted only when it is bound
+#   to the named origin (see _harness_launcher_restore_launch_record).
+_harness_launcher_restore_launch_record_bound() {
+  [[ -n "${4:-}" && -n "${5:-}" ]] || return 1
+  _harness_launcher_restore_launch_record "$1" "$2" "$3" "$4" "$5"
+}
+
+# _harness_launcher_codex_import_origin <source-root> <lowercase id>
+#   Prints `<origin_state_home> <isolation_id>` for a history import, from the
+#   re-selected catalog row (never from the environment), only when the launch is
+#   top-level and the origin state home equals exactly one configured pool.
+_harness_launcher_codex_import_origin() {
+  local source_root="$1" id="$2" selection key value py ctx
+  local row_source="" row_isolation="" row_origin="" row_status="" row_id=""
+  local current="${HARNESS_SESSION_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher}"
+  local legacy="${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher"
+  ctx="$_HARNESS_LAUNCHER_BIN/harness_launch_context.py"
+  [[ -f "$ctx" && ! -L "$ctx" ]] || return 1
+  py="$(harness_python3_resolve 2>/dev/null)" || return 1
+  HARNESS_SESSION_ID="${inherited_harness_session_id-}" "$py" "$ctx" top-level >/dev/null 2>&1 || return 1
+  selection="$(_harness_launcher_codex_history_select "$source_root" "$id" 2>/dev/null)" || return 1
+  while IFS='=' read -r key value; do
+    case "$key" in
+      source_root) row_source="$value" ;;
+      isolation_id) row_isolation="$value" ;;
+      origin_state_home) row_origin="$value" ;;
+      status) row_status="$value" ;;
+      native_id) row_id="$value" ;;
+    esac
+  done <<< "$selection"
+  [[ "$row_source" == "$source_root" && "${(L)row_id}" == "$id" && -n "$row_origin" && -n "$row_isolation" ]] || return 1
+  [[ "$row_origin" == /* && "$row_isolation" != *[[:space:]]* ]] || return 1
+  [[ "$row_isolation" == canonical || "$row_isolation" =~ $_HARNESS_LAUNCHER_UUID_RE ]] || return 1
+  local matches=0
+  [[ "${row_origin:A}" == "${current:A}" ]] && matches=1
+  [[ "${row_origin:A}" == "${legacy:A}" && "${legacy:A}" != "${current:A}" ]] && matches=1
+  (( matches == 1 )) || return 1
+  print -r -- "$row_origin $row_isolation"
 }
 
 # _harness_launcher_restore_hint <claude|codex> <id> <model>
@@ -1507,6 +1560,9 @@ _harness_launcher_run() {
   unset HARNESS_HOST_DEFAULT_MODE
   local HARNESS_NAME HARNESS_PREFIX HARNESS_CODEX_GLOBAL_MCP_ALLOWLIST HARNESS_CODEX_APPS_ALLOWLIST HARNESS_CODEX_SLACK_APPS HARNESS_MCP_SURFACE_POLICY="" mcp_surface_policy
   local HARNESS_SESSION_ISOLATION_DEFAULT="0"
+  # The caller's own HARNESS_SESSION_ID is an agent marker for the top-level
+  # check; the local below would hide it from child processes.
+  local inherited_harness_session_id="${HARNESS_SESSION_ID-}"
   local HARNESS_SESSION_ID="" HARNESS_SOURCE_ROOT="" HARNESS_SESSION_ROOT=""
   local HARNESS_NATIVE_HISTORY_LEASE_FD=""
   local HARNESS_NATIVE_HISTORY_LEASE_ADOPTED=0
@@ -2145,6 +2201,7 @@ _harness_launcher_run_session() {
       (
         [[ -z "$HARNESS_RUN_DIR" ]] || cd "$HARNESS_RUN_DIR" || exit $?
         harness_export_local_env "${HARNESS_SOURCE_ROOT:-$HARNESS_DIR}" || exit $?
+        harness_claude_export_durable_tmpdir
         local -a HARNESS_SLACK_ARGV=()
         harness_slack_claude_argv "$_HARNESS_SLACK_POLICY" --strict-mcp-config --mcp-config "$_light_file" "${claude_args[@]}" "${claude_launch_tail[@]}" || exit $?
         trap 'harness_slack_settings_cleanup' EXIT
@@ -2158,6 +2215,7 @@ _harness_launcher_run_session() {
       (
         [[ -z "$HARNESS_RUN_DIR" ]] || cd "$HARNESS_RUN_DIR" || exit $?
         harness_export_local_env "${HARNESS_SOURCE_ROOT:-$HARNESS_DIR}" || exit $?
+        harness_claude_export_durable_tmpdir
         _harness_launcher_claude_mcp_local_args "$HARNESS_DIR" || exit $?
         local -a HARNESS_SLACK_ARGV=()
         harness_slack_claude_argv "$_HARNESS_SLACK_POLICY" "${claude_args[@]}" "${reply[@]}" "${claude_launch_tail[@]}" || exit $?
@@ -2379,7 +2437,20 @@ _harness_launcher_codex_restore_apply() {
   local hint=false
   restore_id="$(_harness_launcher_restore_resume_id codex "${argv[@]}")" || return 0
   _harness_launcher_restore_probe codex "$restore_id" || true
-  _harness_launcher_restore_launch_record codex "$restore_id" "${HARNESS_SOURCE_ROOT:-${HARNESS_DIR:A}}" || hint=true
+  if [[ "${(L)HARNESS_CODEX_HISTORY_NATIVE_ID:-}" == "$restore_id" ]]; then
+    # History import: the origin record lives in the row's own state home, bound
+    # to the row's origin; a nested or unbound launch keeps default permissions.
+    local import_origin import_state import_isolation
+    import_origin="$(_harness_launcher_codex_import_origin "${HARNESS_SOURCE_ROOT:-${HARNESS_DIR:A}}" "$restore_id")" || import_origin=""
+    import_state="${import_origin%% *}" import_isolation="${import_origin#* }"
+    if [[ -n "$import_origin" ]]; then
+      _harness_launcher_restore_launch_record_bound codex "$restore_id" "${HARNESS_SOURCE_ROOT:-${HARNESS_DIR:A}}" "$import_state" "$import_isolation" || hint=true
+    else
+      hint=true
+    fi
+  else
+    _harness_launcher_restore_launch_record codex "$restore_id" "${HARNESS_SOURCE_ROOT:-${HARNESS_DIR:A}}" || hint=true
+  fi
   # The launched profile carries grants of its own (plan is read-only), so it is
   # reapplied, but only while the generated registry still has it; otherwise
   # keep base and say so.
