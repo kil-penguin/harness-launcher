@@ -2,7 +2,7 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
-## Unreleased
+## Unreleased — Usage collection
 
 - Add a usage-collection policy: only harnesses that opt in with
   `HARNESS_AGENT_USAGE_COLLECT="1"` on an enrolled device stay visible to an
