@@ -1077,5 +1077,144 @@ class CodexHistoryTest(unittest.TestCase):
         finally:denied.chmod(0o700)
 
 
+class RootIdentityTest(unittest.TestCase):
+    """Root identity tolerates APFS device renumbering at every codex-history site."""
+
+    setUp = CodexHistoryTest.setUp
+    _make_home = CodexHistoryTest._make_home
+    _make_auxiliary_db = CodexHistoryTest._make_auxiliary_db
+    _make_state_db = CodexHistoryTest._make_state_db
+    _make_history_db = CodexHistoryTest._make_history_db
+
+    def fixture(self, name, recorded):
+        state = self.base / name
+        identifier = ISOLATION_ID
+        root, record = state / "worktrees" / identifier, state / "sessions" / identifier
+        shutil.copytree(self.home, root / ".harness/codex", symlinks=True)
+        record.mkdir(parents=True)
+        info = root.stat()
+        for key, value in (("source-root", str(self.source_root)), ("session-root", str(root)),
+                           ("root-inode", recorded(info)), ("lease-v1", "1\n"), ("runtime.lock", ""),
+                           ("journal", "state=CLOSED\nidentity=\nheartbeat=2026-10-10T00:00:00Z\n")):
+            (record / key).write_text(value)
+        return state, root, record
+
+    RENUMBERED = staticmethod(lambda info: f"{info.st_dev + 1} {info.st_ino}")
+    OTHER_INODE = staticmethod(lambda info: f"{info.st_dev + 1} {info.st_ino + 1}")
+    SAME = staticmethod(lambda info: f"{info.st_dev} {info.st_ino}")
+
+    def seam_other_device(self, root):
+        real = history_module.identity_stat
+        def fake(path):
+            info = real(path)
+            if Path(path) != root:
+                return info
+            return os.stat_result((info.st_mode, info.st_ino, info.st_dev + 7, *tuple(info)[3:]))
+        return mock.patch.object(history_module, "identity_stat", fake)
+
+    def test_helper_rule(self):
+        state, root, _ = self.fixture("helper", self.SAME)
+        info = root.stat()
+        match = history_module.root_identity_matches
+        self.assertTrue(match(f"{info.st_dev} {info.st_ino}", root))
+        self.assertTrue(match(f"{info.st_dev + 1} {info.st_ino}", root))
+        self.assertFalse(match(f"{info.st_dev + 1} {info.st_ino + 1}", root))
+        self.assertFalse(match(f"{info.st_dev} {info.st_ino + 1}", root))
+        self.assertFalse(match("garbage", root))
+        self.assertFalse(match("", root))
+        with self.seam_other_device(root):
+            self.assertFalse(match(f"{info.st_dev + 1} {info.st_ino}", root))
+        replaced = root.with_name("replaced")
+        replaced.mkdir()
+        self.assertFalse(match(f"{info.st_dev + 1} {info.st_ino}", replaced))
+        link = root.with_name("link")
+        link.symlink_to(root, target_is_directory=True)
+        self.assertFalse(match(f"{info.st_dev} {info.st_ino}", link))
+
+    def catalog_args(self, state):
+        return type("Args", (), {"source_root": str(self.source_root), "state_home": str(state), "legacy_state_home": None})()
+
+    def test_catalog_quarantine_site(self):
+        for label, recorded, seam, reason in (("renumbered", self.RENUMBERED, False, None),
+                                              ("inode", self.OTHER_INODE, False, "root_inode_mismatch"),
+                                              ("device", self.RENUMBERED, True, "root_inode_mismatch")):
+            with self.subTest(label):
+                state, root, _ = self.fixture("catalog-" + label, recorded)
+                with (self.seam_other_device(root) if seam else contextlib.nullcontext()):
+                    result = history_module.catalog_value(self.catalog_args(state))
+                self.assertEqual([w["reason"] for w in result["warnings"]], [reason] if reason else [])
+
+    def test_provenance_site(self):
+        for label, recorded, seam, ok in (("renumbered", self.RENUMBERED, False, True),
+                                          ("inode", self.OTHER_INODE, False, False),
+                                          ("device", self.RENUMBERED, True, False)):
+            with self.subTest(label):
+                state, root, _ = self.fixture("prov-" + label, recorded)
+                args = types.SimpleNamespace(isolation_id=ISOLATION_ID, runtime_revision=RUNTIME_REVISION,
+                                             source_root=str(self.source_root), source=str(root / ".harness/codex"),
+                                             catalog=str(state / "native-history"))
+                with (self.seam_other_device(root) if seam else contextlib.nullcontext()):
+                    if ok:
+                        history_module.validate_provenance(args)
+                    else:
+                        with self.assertRaisesRegex(history_module.Refusal, "unverified Native root inode"):
+                            history_module.validate_provenance(args)
+
+    def protect(self, state):
+        seen = []
+        def fake_snapshot(args):
+            Path(args.receipt).write_text(json.dumps({"snapshot_id": "a" * 64}))
+            print(json.dumps({"snapshot_id": "a" * 64}))
+        def fake_verify(args):
+            seen.append(True)
+        args = type("Args", (), {"state_home": str(state), "source_root": str(self.source_root), "codex_bin": "/bin/true"})()
+        with mock.patch.object(history_module, "snapshot", fake_snapshot), mock.patch.object(history_module, "verify", fake_verify), \
+                contextlib.redirect_stdout(io.StringIO()):
+            history_module.protect_pool(args)
+        return seen
+
+    def test_protect_pool_validation_and_under_lease_sites(self):
+        for label, recorded, seam, ok in (("renumbered", self.RENUMBERED, False, True),
+                                          ("inode", self.OTHER_INODE, False, False),
+                                          ("device", self.RENUMBERED, True, False)):
+            with self.subTest(label):
+                state, root, _ = self.fixture("pool-" + label, recorded)
+                with (self.seam_other_device(root) if seam else contextlib.nullcontext()):
+                    if ok:
+                        self.assertEqual(self.protect(state), [True])
+                    else:
+                        with self.assertRaisesRegex(history_module.Refusal, "session root inode mismatch"):
+                            self.protect(state)
+
+    def test_under_lease_recheck_site(self):
+        state, root, record = self.fixture("pool-race", self.RENUMBERED)
+        real = history_module.runtime_lease
+        @contextlib.contextmanager
+        def swap(path):
+            with real(path):
+                (record / "root-inode").write_text(self.OTHER_INODE(root.stat()))
+                yield
+        with mock.patch.object(history_module, "runtime_lease", swap):
+            with self.assertRaisesRegex(history_module.Refusal, "Native candidate changed"):
+                self.protect(state)
+
+    def test_tomb_recovery_site(self):
+        for label, recorded, seam, ok in (("renumbered", self.RENUMBERED, False, True),
+                                          ("inode", self.OTHER_INODE, False, False),
+                                          ("device", self.RENUMBERED, True, False)):
+            with self.subTest(label):
+                state, root, record = self.fixture("tomb-" + label, self.SAME)
+                tomb = root.with_name(".retired-" + ISOLATION_ID + "-1")
+                root.rename(tomb)
+                (record / "root-inode").write_text(recorded(tomb.stat()))
+                with (self.seam_other_device(tomb) if seam else contextlib.nullcontext()):
+                    if ok:
+                        self.protect(state)
+                        self.assertTrue(root.is_dir() and not tomb.exists())
+                    else:
+                        with self.assertRaisesRegex(history_module.Refusal, "Native tomb binding mismatch"):
+                            self.protect(state)
+
+
 if __name__ == "__main__":
     unittest.main()
