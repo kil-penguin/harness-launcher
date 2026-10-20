@@ -416,6 +416,38 @@ class InheritTests(unittest.TestCase):
         self.assertEqual((before, inode), (record.read_bytes(), record.stat().st_ino))
         self.assertEqual([p.name for p in record.parent.iterdir() if p.name.startswith(".harness-inherited.json.")], [])
 
+    def write_inode(self, layout, device_delta, inode_delta):
+        info = layout.target.stat()
+        (layout.record / "root-inode").write_text(f"{info.st_dev + device_delta} {info.st_ino + inode_delta}\n")
+
+    def test_renumbered_device_with_same_inode_still_inherits(self):
+        layout = Layout(self)
+        self.write_inode(layout, 1, 0)
+        real = self.module._trust()
+        trust = mock.Mock(broker_source=real.broker_source, regular=real.regular)
+        self.assertEqual(self.module.ensure(layout.home, trust), [])
+        self.assertIn(PLUGIN_ID, layout.config()["plugins"])
+
+    def test_different_inode_or_foreign_device_receives_no_write(self):
+        real = self.module._trust()
+        trust = mock.Mock(broker_source=real.broker_source, regular=real.regular)
+        for label in ("inode", "device"):
+            with self.subTest(label):
+                layout = Layout(self)
+                self.write_inode(layout, 1, 1 if label == "inode" else 0)
+                before = (layout.home / "config.toml").read_bytes()
+                if label == "device":
+                    original = self.module._fstat
+                    def foreign(fd, original=original):
+                        info = original(fd)
+                        return os.stat_result((info.st_mode, info.st_ino, info.st_dev + 5, *tuple(info)[3:]))
+                    with mock.patch.object(self.module, "_fstat", foreign):
+                        notices = self.module.ensure(layout.home, trust)
+                else:
+                    notices = self.module.ensure(layout.home, trust)
+                self.assertEqual(before, (layout.home / "config.toml").read_bytes())
+                self.assertTrue(any("session root replaced" in n for n in notices), notices)
+
     def test_root_replaced_after_verification_receives_no_write(self):
         layout = Layout(self)
         real = self.module._trust()
