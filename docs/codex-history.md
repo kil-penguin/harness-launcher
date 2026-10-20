@@ -49,7 +49,7 @@ rule, service or daemon.
   checks the saved hashes and a fresh derived restore. Original source paths
   must be inaccessible during the native full-history read. Only derived
   databases may relocate schema-known home paths; originals remain untouched.
-- `catalog --source-root ROOT --state-home STATE [--legacy-state-home STATE]`
+- `catalog --source-root ROOT --state-home STATE [--legacy-state-home STATE] [--native-id UUID]`
   reports native UUID, source/home/isolation, status, time and origin pin from
   canonical, live isolated and validated archived data. No conversation body,
   secret or grant appears in default JSON output. Ambiguous owners fail closed.
@@ -57,7 +57,12 @@ rule, service or daemon.
   `warnings` for that candidate; other verified homes remain discoverable.
   Quarantined bodies are not parsed, their roots cannot be prepared or retired,
   and filename UUID collisions keep that UUID ambiguous. Incomplete filename
-  hints block selection rather than guessing an owner.
+  hints block selection rather than guessing an owner. `--native-id` narrows
+  the output to that UUID before owner dedupe (same row, same schema); each
+  home's inventory is hashed once per call unless its stat signature changes.
+  A root-inode record matches when the inode is equal and the device is equal
+  or the root sits on the device of its `worktrees` directory (APFS device
+  renumbering after a reboot).
 - `prepare --source-root ROOT --state-home STATE --native-id UUID` snapshots a
   selected stable canonical or terminal isolated home. Canonical provenance uses
   the literal `canonical` marker and exact source home, never a fabricated Git
