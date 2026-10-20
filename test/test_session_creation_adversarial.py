@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 import importlib.util
+from unittest import mock
 
 
 sys.dont_write_bytecode = True
@@ -62,6 +63,22 @@ def _kill_group_if_alive(pid: int) -> None:
 
 
 class SessionCreationAdversarialTest(unittest.TestCase):
+    def test_stop_engine_does_not_signal_an_already_reaped_leader_group(self) -> None:
+        """A PID whose leader is already reaped is not safe group-signal authority."""
+        creation_module = _module()
+
+        class ReapedLeader:
+            pid = 424242
+            returncode = 0
+
+            def communicate(self, *, timeout: float):
+                raise AssertionError("reaped leader must not be communicated again")
+
+        child = ReapedLeader()
+        with mock.patch.object(creation_module.os, "killpg") as killpg:
+            creation_module._stop_engine(child)
+        self.assertEqual(killpg.call_args_list, [])
+
     def test_keyboard_interrupt_reaps_reserved_engine_process_group(self) -> None:
         """Removing interrupt cleanup must leave the engine's descendant alive."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -106,6 +123,39 @@ class SessionCreationAdversarialTest(unittest.TestCase):
             self.assertIsNotNone(process.wait(timeout=5))
             self.assertTrue(_eventually_missing(engine_pid), "interrupt left reserved engine alive")
             self.assertTrue(_eventually_missing(child_pid), "interrupt left engine descendant alive")
+
+    def test_restore_boundary_interrupt_restores_prior_handler_and_preserves_creation(self) -> None:
+        """An interrupt while restoring SIGINT must not leak the private cancellation type."""
+        creation_module = _module()
+        original_signal = creation_module.signal.signal
+        prior_handler = creation_module.signal.getsignal(signal.SIGINT)
+        calls = 0
+
+        def interrupt_restore(signum: int, handler):
+            nonlocal calls
+            calls += 1
+            if calls >= 2:
+                os.kill(os.getpid(), signal.SIGINT)
+            return original_signal(signum, handler)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source = base / "source"
+            source.mkdir()
+            engine = base / "engine.sh"
+            engine.write_text("#!/bin/sh\nexit 2\n")
+            engine.chmod(0o700)
+            creation = creation_module.Creation(base / "state", source)
+            try:
+                with mock.patch.object(creation_module.signal, "signal", side_effect=interrupt_restore):
+                    with self.assertRaises(KeyboardInterrupt):
+                        with creation:
+                            creation.prepare(engine, dict(os.environ), local=True, timeout=5)
+            finally:
+                original_signal(signal.SIGINT, prior_handler)
+            self.assertEqual(calls, 3)
+            self.assertIs(creation_module.signal.getsignal(signal.SIGINT), prior_handler)
+            self.assertTrue(creation._preserve)
 
     def test_second_interrupt_reaps_a_term_ignoring_engine_group(self) -> None:
         """A second interrupt must finish bounded reaping after the TERM barrier."""
@@ -181,6 +231,122 @@ class SessionCreationAdversarialTest(unittest.TestCase):
             child_pid = int((base / "child.ready").read_text())
             self.assertTrue(_eventually_missing(engine_pid), "timeout left reserved engine alive")
             self.assertTrue(_eventually_missing(child_pid), "timeout left engine descendant alive")
+
+    def test_timeout_permission_uncertainty_preserves_artifacts_and_keeps_timeout_primary(self) -> None:
+        """EPERM during cleanup must retain live preparation and report the original timeout."""
+        creation_module = _module()
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            state = base / "state"
+            source = base / "source"
+            source.mkdir()
+            engine = base / "engine.py"
+            engine.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, pathlib, signal\n"
+                "pathlib.Path(os.environ['TEST_EVENT_DIR'], 'engine.ready').write_text(str(os.getpid()))\n"
+                "signal.pause()\n"
+            )
+            engine.chmod(0o700)
+            creation = creation_module.Creation(state, source)
+            with mock.patch.object(creation_module.os, "killpg", side_effect=PermissionError(1, "EPERM")):
+                with self.assertRaisesRegex(creation_module.CreationError, "timed out"):
+                    with creation:
+                        creation.prepare(engine, dict(os.environ, TEST_EVENT_DIR=str(base)), local=True, timeout=0.2)
+            engine_pid = int((base / "engine.ready").read_text())
+            self.addCleanup(lambda: _kill_group_if_alive(engine_pid))
+            self.assertTrue(creation.record.is_dir(), "uncertain cleanup deleted its record")
+            self.assertTrue(creation.root.is_dir(), "uncertain cleanup deleted its workspace")
+
+    def test_timeout_with_unconfirmed_cleanup_preserves_without_an_inherited_lease(self) -> None:
+        """The explicit unconfirmed flag, not a child lease, must retain this reservation."""
+        creation_module = _module()
+
+        class TimedOutChild:
+            pid = 424242
+            returncode = None
+
+            def __init__(self, *_arguments, **_keywords):
+                pass
+
+            def communicate(self, *, timeout: float):
+                raise subprocess.TimeoutExpired(["fake-engine"], timeout)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            state = base / "state"
+            source = base / "source"
+            source.mkdir()
+            creation = creation_module.Creation(state, source)
+            with mock.patch.object(creation_module.subprocess, "Popen", TimedOutChild):
+                with mock.patch.object(creation_module, "_stop_engine", return_value=False) as stop_engine:
+                    with self.assertRaisesRegex(creation_module.CreationError, "timed out"):
+                        with creation:
+                            creation.prepare(ROOT / "bin" / "session-isolation.sh", dict(os.environ), local=True, timeout=0.1)
+            stop_engine.assert_called_once()
+            self.assertTrue(creation.record.is_dir(), "unconfirmed cleanup deleted its record without a child lease")
+            self.assertTrue(creation.root.is_dir(), "unconfirmed cleanup deleted its workspace without a child lease")
+            self.assertTrue(creation.index.is_file(), "unconfirmed cleanup removed its recovery index")
+
+    def test_stop_engine_marks_zombie_eprem_as_unconfirmed(self) -> None:
+        """EPERM from a zombie-only group is uncertainty, never authority for a retry."""
+        creation_module = _module()
+
+        class ZombieLeader:
+            pid = 424242
+            returncode = None
+
+            def communicate(self, *, timeout: float):
+                self.returncode = 0
+                return "", ""
+
+        child = ZombieLeader()
+        with mock.patch.object(creation_module.os, "waitid", return_value=object()):
+            with mock.patch.object(creation_module.os, "killpg", side_effect=PermissionError(1, "EPERM")) as killpg:
+                self.assertFalse(creation_module._stop_engine(child))
+        self.assertEqual(killpg.call_args_list, [mock.call(child.pid, signal.SIGTERM)])
+
+    def test_leader_exit_with_closed_stdio_descendant_preserves_unconfirmed_reservation(self) -> None:
+        """A lease-holding descendant after leader exit must retain the reservation for recovery."""
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            state = base / "state"
+            source = base / "source"
+            source.mkdir()
+            engine = base / "engine.py"
+            engine.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, pathlib, signal\n"
+                "base = pathlib.Path(os.environ['TEST_EVENT_DIR'])\n"
+                "if os.fork(): os._exit(0)\n"
+                "base.joinpath('descendant.ready').write_text(f'{os.getpid()} {os.getpgrp()}')\n"
+                "for descriptor in (0, 1, 2): os.close(descriptor)\n"
+                "signal.pause()\n"
+            )
+            engine.chmod(0o700)
+            caller = base / "caller.py"
+            caller.write_text(
+                "import importlib.util, os, sys\n"
+                "from pathlib import Path\n"
+                "spec = importlib.util.spec_from_file_location('creation', sys.argv[1])\n"
+                "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)\n"
+                "with module.Creation(Path(sys.argv[2]), Path(sys.argv[3])) as creation:\n"
+                "    creation.prepare(Path(sys.argv[4]), dict(os.environ), local=True, timeout=10)\n"
+            )
+            caller_process = subprocess.Popen(
+                [sys.executable, "-I", "-B", str(caller), str(CREATION), str(state), str(source), str(engine)],
+                env=dict(os.environ, TEST_EVENT_DIR=str(base)), start_new_session=True,
+            )
+            caller_process.wait(timeout=5)
+            self.assertNotEqual(caller_process.returncode, 0, "leader exit must not produce valid creation fields")
+            descendant_pid, process_group = map(int, (base / "descendant.ready").read_text().split())
+            self.addCleanup(lambda: _kill_group_if_alive(process_group))
+            record = next((state / "sessions").iterdir())
+            root = next((state / "worktrees").iterdir())
+            self.assertTrue(record.is_dir(), "descendant-held lease lost its record")
+            self.assertTrue(root.is_dir(), "descendant-held lease lost its workspace")
+            os.killpg(process_group, signal.SIGKILL)
+            self.assertTrue(_eventually_missing(descendant_pid), "closed-stdio descendant was not reaped")
 
     def test_reserved_create_rejects_an_unlocked_descriptor_for_the_right_lock(self) -> None:
         """Dropping the inherited locked OFD must not authorize reserved create."""

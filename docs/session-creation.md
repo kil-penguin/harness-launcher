@@ -35,6 +35,14 @@ unadmitted artifacts after its child has stopped. After publication intent,
 uncertainty retains the reservation for readback. A valid published journal,
 changed identity, live lease or unknown binding prevents destructive cleanup.
 
+Cancellation and timeout signal the owned engine group before reaping its
+leader. A non-reaping wait keeps that identity reserved through the bounded
+TERM grace and final KILL; no group signal follows child reaping. Repeated
+interrupts cannot bypass shutdown. An unconfirmed shutdown retains the
+reservation and reports a fixed phase diagnostic without replacing the original
+timeout or cancellation. Preparation runs on the main thread so its scoped
+interrupt handler can prevent implicit reaping inside `communicate()`.
+
 Reconciliation uses a source-owned pending index rather than walking the legacy
 session inventory. Inspection is bounded and reports when its limit is reached.
 It acquires the actual creation

@@ -31,6 +31,10 @@ class PublicationError(CreationError):
     """A bound creation lacks a verified matching publication."""
 
 
+class _PreparationInterrupted(BaseException):
+    """Bypass communicate's KeyboardInterrupt handler, which can reap the leader."""
+
+
 def _identity(path: Path) -> dict[str, object]:
     meta = path.lstat()
     if stat.S_ISLNK(meta.st_mode):
@@ -239,27 +243,53 @@ def _runtime_inactive(record: Path):
             os.close(descriptor)
 
 
-def _stop_engine(child: subprocess.Popen) -> None:
-    """Finish bounded cleanup before a repeated terminal interrupt can unwind it."""
+def _stop_engine(child: subprocess.Popen) -> bool:
+    """Signal only while an unreaped child anchors the process-group identity."""
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    def owned():
+        if child.returncode is not None:
+            return False, None
+        try:
+            result = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        except (ChildProcessError, OSError):
+            return False, None
+        return True, result
+
     def send(value):
+        if not owned()[0]:
+            return False
         try:
             os.killpg(child.pid, value)
+            return True
         except ProcessLookupError:
-            pass
+            return True
+        except OSError:
+            # XNU also returns EPERM for a group containing only zombies.
+            # It is not proof of completed cleanup or permission to retry.
+            return False
+
     try:
-        send(signal.SIGTERM)
+        if not owned()[0]:
+            return False
+        confirmed = send(signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while confirmed:
+            retained, exited = owned()
+            if not retained:
+                confirmed = False
+                break
+            if exited is not None or time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+        if confirmed:
+            # Descendants can outlive the leader. Kill before reaping it, even
+            # when it has exited, so its PID cannot become an unrelated PGID.
+            confirmed = send(signal.SIGKILL)
         try:
             child.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            send(signal.SIGKILL)
-            try:
-                child.communicate(timeout=5)
-            except subprocess.TimeoutExpired as exc:
-                raise CreationError('engine cleanup unconfirmed; artifacts retained') from exc
-        finally:
-            # The group may still have descendants after the direct child exits.
-            send(signal.SIGKILL)
+        except (subprocess.TimeoutExpired, OSError):
+            confirmed = False
+        return confirmed
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
@@ -280,6 +310,7 @@ class Creation:
         self.index = self.state / "creation-pending" / self.bucket / self.id
         self._lease: int | None = None
         self._metadata: dict[str, object] | None = None
+        self._preserve = False
 
     def __enter__(self) -> "Creation":
         try:
@@ -347,7 +378,7 @@ class Creation:
             if original is None:
                 return
             os.close(original)
-            if metadata is not None and metadata.get("phase") in {"reserved", "preparing", "prepared"}:
+            if not self._preserve and metadata is not None and metadata.get("phase") in {"reserved", "preparing", "prepared"}:
                 # The child inherited the original open-file description. Only
                 # a fresh OFD can prove that no surviving inheritor holds it.
                 self._lease = os.open(self.record / 'creation.lock', os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -424,18 +455,53 @@ class Creation:
                 descriptors += (diagnostic_fd,)
             else:
                 inherited.pop('HARNESS_CREATION_DIAGNOSTIC_FD', None)
-            child = subprocess.Popen(command, env=inherited, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                     text=True, pass_fds=descriptors, start_new_session=True)
+            cancelling = False
+            launching = True
+            cancel_requested = False
+            child = None
+            def interrupted(_signum, _frame):
+                nonlocal cancel_requested, cancelling
+                cancel_requested = True
+                self._preserve = True
+                if not cancelling and not launching:
+                    cancelling = True
+                    raise _PreparationInterrupted()
+
+            # signal.signal rejects non-main threads before a child is started.
             try:
+                previous_handler = signal.signal(signal.SIGINT, interrupted)
+            except ValueError as exc:
+                raise CreationError('reserved engine preparation requires the main thread') from exc
+            try:
+                # Remember interrupts during launch without unwinding Popen
+                # before the owned child is assigned. Do not pass a blocked
+                # SIGINT mask into the child process.
+                child = subprocess.Popen(command, env=inherited, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         text=True, pass_fds=descriptors, start_new_session=True)
+                launching = False
+                if cancel_requested:
+                    raise _PreparationInterrupted()
                 stdout, stderr = child.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
+            except (subprocess.TimeoutExpired, _PreparationInterrupted) as exc:
+                cancelling = True
+                self._preserve = True
                 _diagnostic('reap', self.source, started, inherited)
-                _stop_engine(child)
-                raise CreationError("reserved engine preparation timed out")
-            except KeyboardInterrupt:
-                _diagnostic('reap', self.source, started, inherited)
-                _stop_engine(child)
-                raise
+                if child is not None and _stop_engine(child):
+                    self._preserve = False
+                if self._preserve:
+                    _diagnostic('cleanup-unconfirmed', self.source, started, inherited)
+                if isinstance(exc, subprocess.TimeoutExpired):
+                    raise CreationError("reserved engine preparation timed out") from exc
+                raise KeyboardInterrupt() from None
+            finally:
+                try:
+                    signal.signal(signal.SIGINT, previous_handler)
+                except _PreparationInterrupted:
+                    # The first interrupt can arrive at the restore boundary.
+                    # Its handler has already fenced subsequent interrupts,
+                    # so restoration can finish before translating it.
+                    signal.signal(signal.SIGINT, previous_handler)
+                    raise KeyboardInterrupt() from None
         except OSError as exc:
             raise CreationError("reserved engine preparation failed") from exc
         finally:
