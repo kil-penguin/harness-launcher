@@ -29,6 +29,8 @@ AGENT_MARKERS = (
     "CODEX_SANDBOX",
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "HARNESS_SESSION_ID",
+    # lets a caller that strips HARNESS_SESSION_ID (the kh dispatcher) still signal a nested launch
+    "HARNESS_PARENT_SESSION_ID",
 )
 # `node` covers an npm-installed Claude Code, whose executable is node.
 AGENT_EXECUTABLES = ("claude", "codex", "node")
@@ -41,7 +43,7 @@ def process_table(path=None):
             with open(path, encoding="utf-8") as stream:
                 text = stream.read()
         else:
-            text = subprocess.run(["ps", "-axo", "pid=,ppid=,comm="], capture_output=True,
+            text = subprocess.run(["/bin/ps", "-axo", "pid=,ppid=,comm="], capture_output=True,
                                   text=True, timeout=5, check=True).stdout
         table = {}
         for line in text.splitlines():

@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "bin" / "harness_launch_context.py"
@@ -42,6 +43,15 @@ class LaunchContextTest(unittest.TestCase):
         chain = {pid: (pid + 1, "/bin/sh") for pid in range(100, 166)}
         self.assertEqual(self.check(table=chain, start=100), (False, "hop_limit"))
         self.assertEqual(context.ancestry_reason(None, 40), "ps_unreadable")
+
+    def test_parent_session_marker_is_registered(self):
+        self.assertIn("HARNESS_PARENT_SESSION_ID", context.AGENT_MARKERS)
+        self.assertEqual(self.check(environ=dict(CLEAN, HARNESS_PARENT_SESSION_ID="x")), (False, "env:HARNESS_PARENT_SESSION_ID"))
+
+    def test_live_process_table_uses_absolute_ps(self):
+        with unittest.mock.patch.object(context.subprocess, "run", side_effect=OSError) as run:
+            self.assertIsNone(context.process_table())
+        self.assertEqual(run.call_args[0][0][0], "/bin/ps")
 
     def test_each_agent_marker_withholds(self):
         for name in context.AGENT_MARKERS:

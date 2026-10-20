@@ -286,7 +286,7 @@ harness_claude_export_durable_tmpdir() {
   fi
   [ -d "$base" ] && [ ! -L "$base" ] && [ -O "$base" ] || return 0
   chmod 700 "$base" 2>/dev/null || return 0
-  mode="$(stat -c %a "$base" 2>/dev/null || stat -f %Lp "$base" 2>/dev/null)"
+  mode="$(command stat -c %a "$base" 2>/dev/null || command stat -f %Lp "$base" 2>/dev/null)"
   [ "$mode" = 700 ] || return 0
   probe="$base/.probe.$$"
   (umask 077; : > "$probe") 2>/dev/null || return 0

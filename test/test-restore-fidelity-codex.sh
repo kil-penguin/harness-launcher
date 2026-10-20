@@ -364,4 +364,27 @@ echo 'PASS: Y4 snapshot rows resolve the origin pool from the manifest source'
   || fail 'Y5 a row whose origin pool is not configured must carry an empty origin_state_home'
 echo 'PASS: Y5 origin pool must be a configured pool'
 
+# Y6: the caller's own HARNESS_SESSION_ID (a nested launch) must reach the real
+# top-level check through _harness_launcher_run (the function-local reset would
+# otherwise hide it) and withhold the grant. The context script is a recorder.
+REC_BIN="$TMP/recbin"; mkdir -p "$REC_BIN"; cp "$BIN"/* "$REC_BIN/"
+cat > "$REC_BIN/harness_launch_context.py" <<'STUB'
+#!/usr/bin/env python3
+import os, sys
+open(os.environ["TEST_CTX_LOG"], "a").write("sid=%s argv=%s\n" % (os.environ.get("HARNESS_SESSION_ID", ""), " ".join(sys.argv[1:])))
+if os.environ.get("HARNESS_SESSION_ID"):
+    print("top_level=0 reason=env:HARNESS_SESSION_ID"); raise SystemExit(1)
+print("top_level=1")
+STUB
+write_record $ID "${G_ENV[@]}"
+export TEST_CTX_LOG="$TMP/ctx.log"; : > "$TEST_CTX_LOG"
+FAKE_BIN="$REC_BIN" run_codex "$OUT" HARNESS_SESSION_ID=caller-sid HARNESS_CODEX_HISTORY_NATIVE_ID=$ID -- --passthrough resume $ID || true
+grep -Fq 'sid=caller-sid argv=top-level' "$TEST_CTX_LOG" || fail "Y6 caller HARNESS_SESSION_ID did not reach the context check: $(cat "$TEST_CTX_LOG")"
+[[ "$(env_of "$OUT" HARNESS_LAUNCH_APPROVAL)" != never ]] || fail 'Y6 grant applied for a nested caller' "$OUT"
+: > "$TEST_CTX_LOG"
+FAKE_BIN="$REC_BIN" run_codex "$OUT" HARNESS_SESSION_ID= HARNESS_CODEX_HISTORY_NATIVE_ID=$ID -- --passthrough resume $ID || true
+grep -Fqx 'sid= argv=top-level' "$TEST_CTX_LOG" || fail "Y6 control: context check not run without a caller id: $(cat "$TEST_CTX_LOG")"
+unset TEST_CTX_LOG
+echo 'PASS: Y6 caller HARNESS_SESSION_ID reaches the top-level check and withholds the grant'
+
 echo 'PASS: Codex restore fidelity'

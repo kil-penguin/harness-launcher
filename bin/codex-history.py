@@ -930,13 +930,20 @@ def dedupe_entries(entries,store,keep_private=False):
         home=Path(home);used.add(home)
         hit=state.get(home)
         if hit is None:
-            children=source_children(home)
-            signature=inventory_signature(home,children)
-            hit=state[home]=(children,signature,source_inventory(home,children))
+            try:
+                children=source_children(home)
+                signature=inventory_signature(home,children)
+                hit=state[home]=(children,signature,source_inventory(home,children))
+            except (OSError,Refusal):
+                # unreadable now: never equal to a recorded inventory, and always held as changed
+                hit=state[home]=((),None,[])
         return hit[2]
+    def changed(home,children,signature):
+        if signature is None:return True
+        try:return inventory_signature(home,children)!=signature
+        except OSError:return True  # a home that vanished or became unreadable counts as changed
     def changed_homes():
-        return {home for home,(children,signature,_) in state.items()
-                if inventory_signature(home,children)!=signature}
+        return {home for home,(children,signature,_) in state.items() if changed(home,children,signature)}
     decided=decide_entries(entries,store,inventory)
     unstable=changed_homes()
     if unstable:

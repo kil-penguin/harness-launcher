@@ -522,20 +522,19 @@ _harness_launcher_restore_launch_record_bound() {
 #   top-level and the origin state home equals exactly one configured pool.
 _harness_launcher_codex_import_origin() {
   local source_root="$1" id="$2" selection key value py ctx
-  local row_source="" row_isolation="" row_origin="" row_status="" row_id=""
+  local row_source="" row_isolation="" row_origin="" row_id=""
   local current="${HARNESS_SESSION_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher}"
   local legacy="${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher"
   ctx="$_HARNESS_LAUNCHER_BIN/harness_launch_context.py"
   [[ -f "$ctx" && ! -L "$ctx" ]] || return 1
   py="$(harness_python3_resolve 2>/dev/null)" || return 1
-  HARNESS_SESSION_ID="${inherited_harness_session_id-}" "$py" "$ctx" top-level >/dev/null 2>&1 || return 1
+  HARNESS_SESSION_ID="${inherited_harness_session_id-}" "$py" -I "$ctx" top-level >/dev/null 2>&1 || return 1
   selection="$(_harness_launcher_codex_history_select "$source_root" "$id" 2>/dev/null)" || return 1
   while IFS='=' read -r key value; do
     case "$key" in
       source_root) row_source="$value" ;;
       isolation_id) row_isolation="$value" ;;
       origin_state_home) row_origin="$value" ;;
-      status) row_status="$value" ;;
       native_id) row_id="$value" ;;
     esac
   done <<< "$selection"
@@ -2442,7 +2441,7 @@ _harness_launcher_codex_restore_apply() {
     # to the row's origin; a nested or unbound launch keeps default permissions.
     local import_origin import_state import_isolation
     import_origin="$(_harness_launcher_codex_import_origin "${HARNESS_SOURCE_ROOT:-${HARNESS_DIR:A}}" "$restore_id")" || import_origin=""
-    import_state="${import_origin%% *}" import_isolation="${import_origin#* }"
+    import_state="${import_origin% *}" import_isolation="${import_origin##* }"
     if [[ -n "$import_origin" ]]; then
       _harness_launcher_restore_launch_record_bound codex "$restore_id" "${HARNESS_SOURCE_ROOT:-${HARNESS_DIR:A}}" "$import_state" "$import_isolation" || hint=true
     else

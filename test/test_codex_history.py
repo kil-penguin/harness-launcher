@@ -1444,6 +1444,16 @@ class CatalogCostTest(unittest.TestCase):
         for row in held:
             self.assertEqual((row["status"], row["reason"]), ("ambiguous", "source_changed_during_catalog"))
 
+    def test_home_removed_between_first_and_end_signature_is_held_without_traceback(self):
+        state, home = self.multi_row_live_home_with_archive("signature-home-removed")
+        calls, patch = self.counted(home, lambda count: shutil.rmtree(home) if count == 1 else None)
+        with patch:
+            result = history_module.catalog_value(self.args(state))
+        held = [r for r in result["entries"] if r["home"] == str(home)]
+        self.assertTrue(held)
+        for row in held:
+            self.assertEqual((row["status"], row["reason"]), ("ambiguous", "source_changed_during_catalog"))
+
 
 class OriginStateHomeTest(unittest.TestCase):
     """origin_state_home names the one configured state home that owns a row's origin record."""
