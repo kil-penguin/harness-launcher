@@ -12,7 +12,7 @@ import stat
 import subprocess
 import sys
 
-CAPSULE_SHA256 = 'b6763b8a51f12c9fbce1f34ec4210fd0bfea863bfdec5d673cbfd031d7073128'
+CAPSULE_SHA256 = '7c482fe4ecd13411a89517eab1052fdfb790d240be85eebbf9c26abb3f1db4a6'
 SYSTEM_DIRS = ('/usr/bin', '/bin')
 HISTORICAL_KEYS = frozenset(('status', 'reason', 'selected', 'physical', 'physical_parent',
     'system_jq', 'manifest_jq_bindings', 'jq_real_query', 'native_calls',
@@ -117,13 +117,15 @@ def verify_evidence(root, raw, reader):
     require(type(raw) is bytes and hashlib.sha256(raw).hexdigest() == CAPSULE_SHA256, 'EVIDENCE_DIGEST')
     capsule = decode(raw)
     require(set(capsule) == {'schema', 'provenance', 'observation', 'source_pins'}
-            and capsule['schema'] == 'w07.jq-fallback-evidence/v1', 'EVIDENCE_SHAPE')
+            and capsule['schema'] == 'w07.jq-fallback-evidence/v2', 'EVIDENCE_SHAPE')
     require(capsule['provenance'] == {
-        'head': '093f664de2647f358eb24c059f991a5f16ae6956', 'job': 118160822054,
-        'whole_log_sha256': '8849cee39b12813a86f75512c974c4a29a1c1cc700620f1b97770990245e4f12',
-        'line': 207, 'line_sha256': '39a2417db70a2e0ecf6504a368fc8c3408b43af8c41c1150e24f1a5b0dfe5440',
-        'root_receipt_sha256': '7e894e4140f699ee811954241eca58140a374ea8741cf44a263ccbfd1d50b140'},
-        'EVIDENCE_PROVENANCE')
+        'head': '449e1f2776a3555f23ef41cf5f375178a494f5d5',
+        'job': 118499176581,
+        'whole_log_sha256': '57682781391bbc85ab2c11032f0f9cac5fd17a4484a78fc5d1d328de41fa3f81',
+        'line': 243,
+        'line_sha256': '8bb1a4784ced6f04655ee53203db99fbc13bb8f0ea418681f249c1580a6c8fc6',
+        'source_receipt_sha256': 'e2109915288cf48d6e8050546714ce5e3c2c31c678155729e275a21e4bcf0b72',
+    }, 'EVIDENCE_PROVENANCE')
     require(validate_observation(capsule['observation'], historical=True) == 'NON_SYSTEM', 'HISTORICAL_BRANCH')
     pins = capsule['source_pins']
     require(type(pins) is list and len(pins) == 9, 'SOURCE_CLOSURE')
@@ -166,7 +168,7 @@ def inspect(root, strict, runner):
 
 def prove(root, *, capsule_bytes=None, read_source=read_source, runner=None):
     if capsule_bytes is None:
-        capsule_bytes = (root/'test/fixtures/omp-jq-v1-093-evidence.json').read_bytes()
+        capsule_bytes = (root/'test/fixtures/omp-jq-v2-p1-evidence.json').read_bytes()
     source_digest = verify_evidence(root, capsule_bytes, read_source)
     runner = subprocess.run if runner is None else runner
     ordinary, branch = inspect(root, False, runner)

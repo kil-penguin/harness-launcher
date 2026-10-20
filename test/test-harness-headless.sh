@@ -317,6 +317,8 @@ assert set(fs['denyRead']) == set(homes + [source, '/secret']), fs
 assert fs['allowWrite'] == [tmp], fs
 git = root + '/.git'
 assert set(fs['denyWrite']) >= {git + '/config', git + '/hooks', git + '/info', '/private/tmp/claude-' + uid, '/tmp/claude-' + uid}, fs
+assert home + '/.local/state/cct' in fs['denyWrite'], ('durable scratchpad base must be write-denied', fs)
+assert 'Write(/%s/.local/state/cct/**)' % home in deny, 'edit tools must also be denied the durable base'
 assert set(sandbox) == {'enabled', 'failIfUnavailable', 'allowUnsandboxedCommands', 'autoAllowBashIfSandboxed', 'network', 'filesystem'}, sandbox
 # Gate parity: every sandbox read deny is a Read deny, and both read- and
 # write-denied paths are closed to the edit tools.

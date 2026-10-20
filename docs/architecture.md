@@ -664,7 +664,9 @@ options behaves exactly as before.
   fresh `/private/tmp/hh-*` directory (0700, owned by the user, short enough
   for Claude's per-uid socket directory), so the shared
   `/private/tmp/claude-<uid>` can stay write-denied. That directory is
-  removed before delivery and on every exit path. With `HARNESS_HEADLESS=1` the launcher does not
+  removed before delivery and on every exit path. The durable interactive base
+  `${XDG_STATE_HOME:-$HOME/.local/state}/cct` is added to the sandbox `denyWrite`
+  list (and the edit tools), so a run cannot touch other sessions' scratchpads. With `HARNESS_HEADLESS=1` the launcher does not
   export the harness `.claude/settings.local.json` `env` block, does not derive
   a per-harness `GH_TOKEN`, and passes no `--mcp-config`.
 - **Session.** It calls `harness-exec <harness> --isolated --passthrough ...`,
@@ -1249,6 +1251,20 @@ sandbox grant from a launch record. The two sources have different trust:
   does not stop a process running as the same user from writing the file, exactly
   like every other file in the state directory.
 
+A Codex history import (`codex resume <id>` that creates a fresh isolated session
+from durable history) restores the origin's grant too, but only through the catalog
+row: the launcher re-selects the row, takes `origin_state_home` from it (never from
+the environment), reads `launch-records/codex-<id>` only in that one state home, and
+accepts the record only when its `source_root` matches and it is bound to the row's
+origin (`isolated=0` for a canonical row; otherwise `isolated=1` and a
+`harness_session_id` equal, ignoring case, to the row's isolation id). It is applied
+only for a top-level launch (`harness_launch_context.py top-level`: a terminal in the
+foreground, no agent marker in the environment, a complete process ancestry without
+`claude`, `codex` or `node`). A nested launch, an unbound record or an unconfigured
+origin keeps the default permissions and prints the relaunch hint. The record is a
+same-user file: this blocks accidental or trivial carry-over, not a hostile
+same-user process.
+
 Three details keep the record honest. A Claude hook takes its grant as command
 arguments inside the launcher's `--settings`, never from the environment, because
 Claude applies the agent-writable `env` block of `.claude/settings.local.json`.
@@ -1265,6 +1281,26 @@ isolated session): an isolated owner still wins. The nesting rule stops accident
 agent: a same-user process can still write the record file directly, double-fork so it
 is reparented to launchd, or type the launch into a pane shell (herdr, tmux, osascript),
 and each of these counts as top-level. That stays the documented same-user boundary.
+
+### Durable Claude scratchpad
+
+Interactive launcher Claude (the shortcut path and the picker; not headless) gets
+`CLAUDE_CODE_TMPDIR=${XDG_STATE_HOME:-$HOME/.local/state}/cct` in Claude's own
+environment when the variable is unset, so session scratchpads (otherwise under
+`/private/tmp/claude-<uid>`, which macOS clears at boot) survive a reboot. The
+launcher never exports it to the user's shell and never overrides a preset value.
+It sets the variable only when the base path is at most 40 bytes (Claude's
+per-session sockets live below it and `AF_UNIX` paths are short), the directory is
+created or tightened to 0700, is owned by the user, is not a symlink, and a write
+probe succeeds; otherwise Claude keeps its default. The launcher also creates
+`.metadata_never_index` there and runs `tmutil addexclusion` once (best effort).
+There is no launcher cleanup: Claude's retention sweep removes a session's
+scratchpad together with its transcript, so expect the directory to grow with
+long-lived sessions.
+
+Measured 2026-10-20 on the company MacBook: `find /private/tmp/claude-501 -type s`
+found no `AF_UNIX` sockets, and the base `~/.local/state/cct` is 31 bytes. The
+40-byte cap keeps `<base>/claude-<uid>/` as short as `/tmp/claude-<uid>`.
 
 Known limits, kept on purpose:
 
@@ -1371,13 +1407,30 @@ Both modes check whole jq bytes, all manifest bindings, a real synthetic query
 and native calls 0. A system host still strictly returns
 `REFUSED/NON_SYSTEM_JQ_REQUIRED`, exit 2; this is not a fallback PASS.
 
-CI's `test/omp-jq-ci-proof.py` checks a frozen, public-safe actual093 evidence
-capsule at `test/fixtures/omp-jq-v1-093-evidence.json` and nine whole source pins.
-Job 118160822054 at `093f664de2647f358eb24c059f991a5f16ae6956` actually
-proved non-system selection/manifest/query/native0, satisfying V1's historical
-evidence condition for the unchanged source closure. Its log/line/source digests
-are retained; private preparation paths, dependency lists and raw logs/auth are
-excluded. Source changes fail historical reuse, not silently refresh it.
+CI's `test/omp-jq-ci-proof.py` checks a frozen, public-safe P1 evidence
+capsule at `test/fixtures/omp-jq-v2-p1-evidence.json` and nine whole source pins.
+Job 118499176581 at `449e1f2776a3555f23ef41cf5f375178a494f5d5` actually
+proved non-system selection/manifest/query/native0 on `macos-14`, with ordinary
+and strict calls to the unchanged inspector and identical source pins before
+and after both calls. This satisfies the historical actual-evidence condition
+for this exact source closure. The earlier actual093 capsule remains unchanged
+as evidence for its original sources; it cannot prove the changed P1 sources.
+
+The v2 capsule pins actual job/head, whole-log and observation-line digests.
+Its `source_receipt_sha256` hashes UTF-8 JSON of `{head, source_pins}` with sorted
+keys and compact separators. This is a source receipt, not the prior capsule's
+root approval receipt. Private preparation paths, dependency lists and raw
+logs/auth are excluded from the public capsule. Source changes fail historical
+reuse, not silently refresh it.
+
+To renew evidence after a source change, use a temporary evidence-only job in
+the existing workflow on the reviewed branch. Preserve all normal CI jobs.
+Run the original ordinary and strict inspector on an actual non-system host,
+require both passes and unchanged before/after source pins, and retain the actual
+job log before creating a new frozen capsule and exact verifier pins. Never
+remove or hide system jq, replace its locator, or relabel a system refusal as a
+non-system pass. A capture job proves only that observation, not whole-CI success;
+remove the temporary job and require the normal complete CI on the final source.
 
 After pure `test/test_omp_jq_ci_proof.py`, each current CI runs the original
 inspector ordinarily then strictly, without a shell or retry. Actual system

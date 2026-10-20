@@ -63,6 +63,12 @@ rule, service or daemon.
   A root-inode record matches when the inode is equal and the device is equal
   or the root sits on the device of its `worktrees` directory (APFS device
   renumbering after a reboot).
+  Each row also carries `origin_state_home`, the state home that owns the
+  origin's launch record: for a live row `P` of
+  `<P>/worktrees/<id>/.harness/codex`, for a snapshot row the same rule on the
+  manifest `source`, for a canonical origin the legacy XDG home. It must equal
+  exactly one configured state home (current or `--legacy-state-home`); any other
+  origin is the empty string and grants nothing.
 - `prepare --source-root ROOT --state-home STATE --native-id UUID` snapshots a
   selected stable canonical or terminal isolated home. Canonical provenance uses
   the literal `canonical` marker and exact source home, never a fabricated Git

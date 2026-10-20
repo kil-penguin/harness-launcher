@@ -85,8 +85,29 @@ def _entries(directory,problems,profile,limit=MAX_NODES):
     return sorted(values[:limit],key=lambda entry:entry.name)
 
 
-def _walk(directory,problems,profile,anchor=None):
-    if not os.path.lexists(directory):return
+def _walk(directory,problems,profile,anchor=None,prune=('subagents',)):
+    if not _safe_tree(directory,problems,profile,anchor):return
+    stack,nodes=[(directory,0)],0
+    while stack and nodes<MAX_NODES:
+        current,depth=stack.pop()
+        for entry in _entries(current,problems,profile,MAX_NODES-nodes):
+            nodes+=1;path=Path(entry.path)
+            try:
+                if entry.is_symlink():_problem(problems,profile,'unsafe_transcript_node')
+                elif entry.is_dir(follow_symlinks=False):
+                    # <slug>/<session>/subagents holds only sub-agent logs: one node, never entered.
+                    if depth==2 and entry.name in prune:continue
+                    if depth<12:stack.append((path,depth+1))
+                    else:_problem(problems,profile,'transcript_depth_budget')
+                elif entry.name.endswith('.jsonl'):
+                    if entry.is_file(follow_symlinks=False):yield path
+                    else:_problem(problems,profile,'unsafe_transcript_node')
+            except OSError:_problem(problems,profile,'transcript_scan_failed')
+    if stack:_problem(problems,profile,'transcript_scan_budget')
+
+
+def _safe_tree(directory,problems,profile,anchor=None):
+    if not os.path.lexists(directory):return False
     try:
         current=directory;anchor=anchor or directory.parent
         unsafe=False
@@ -96,24 +117,47 @@ def _walk(directory,problems,profile,anchor=None):
             if current==current.parent:unsafe=True;break
             current=current.parent
         if unsafe or not directory.is_dir():
-            _problem(problems,profile,'unsafe_transcript_tree');return
+            _problem(problems,profile,'unsafe_transcript_tree');return False
     except OSError:
-        _problem(problems,profile,'transcript_scan_failed');return
-    stack,nodes=[(directory,0)],0
-    while stack and nodes<MAX_NODES:
-        current,depth=stack.pop()
-        for entry in _entries(current,problems,profile,MAX_NODES-nodes):
-            nodes+=1;path=Path(entry.path)
-            try:
-                if entry.is_symlink():_problem(problems,profile,'unsafe_transcript_node')
-                elif entry.is_dir(follow_symlinks=False):
-                    if depth<12:stack.append((path,depth+1))
-                    else:_problem(problems,profile,'transcript_depth_budget')
-                elif entry.name.endswith('.jsonl'):
-                    if entry.is_file(follow_symlinks=False):yield path
-                    else:_problem(problems,profile,'unsafe_transcript_node')
-            except OSError:_problem(problems,profile,'transcript_scan_failed')
-    if stack:_problem(problems,profile,'transcript_scan_budget')
+        _problem(problems,profile,'transcript_scan_failed');return False
+    return True
+
+
+def _exact_walk(directory,native_id,problems,profile):
+    """Yield only `<native_id>.jsonl` directly under projects/ or projects/<slug>/.
+
+    Session folders are never entered. Non-target names are skipped before any
+    read, but a symlinked slug is a problem (it could hide the target) and the
+    shared node budget fails closed on truncation.
+    """
+    if not _safe_tree(directory,problems,profile):return
+    target=native_id.lower()+'.jsonl';budget=MAX_NODES
+    def listing(folder):
+        nonlocal budget
+        values=_entries(folder,problems,profile,budget)
+        budget-=len(values)
+        return values
+    def candidate(entry):
+        if entry.name.lower()!=target:return None
+        try:
+            if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                _problem(problems,profile,'unsafe_transcript_node');return None
+        except OSError:
+            _problem(problems,profile,'transcript_scan_failed');return None
+        return Path(entry.path)
+    for entry in listing(directory):
+        try:
+            if entry.is_symlink():_problem(problems,profile,'unsafe_transcript_node');continue
+            is_dir=entry.is_dir(follow_symlinks=False)
+        except OSError:
+            _problem(problems,profile,'transcript_scan_failed');continue
+        if not is_dir:
+            found=candidate(entry)
+            if found:yield found
+            continue
+        for child in listing(Path(entry.path)):
+            found=candidate(child)
+            if found:yield found
 
 
 def _meta(path):
@@ -138,7 +182,7 @@ def _meta(path):
 def _transcripts(base, problems=None, profile=None):
     problems=[] if problems is None else problems
     for name in ('sessions', 'archived_sessions'):
-        yield from _walk(base/'codex'/name,problems,profile,base)
+        yield from _walk(base/'codex'/name,problems,profile,base,prune=())
 
 
 def _record(profile, owner, source, home, path, availability, archived=False, launcher_id=None):
@@ -339,31 +383,32 @@ def _provider_owners(state, source, problems, profile):
     return owners
 
 
-def _claude_records(profile, source, home, problems, owners):
+def _claude_records(profile, source, home, problems, owners, native_id=None):
     base = home / '.claude' / 'projects'
     records = []
-    for path in _walk(base,problems,profile):
+    paths = _walk(base,problems,profile) if native_id is None else _exact_walk(base,native_id,problems,profile)
+    for path in paths:
         meta = _claude_meta(path)
         if meta is None:
             _problem(problems,profile,'invalid_claude_transcript')
             continue
-        native_id, cwd = meta
-        bindings = owners.get(native_id.lower(), [])
+        found_id, cwd = meta
+        bindings = owners.get(found_id.lower(), [])
         try:
             same_source = Path(cwd).resolve(strict=True) == source
         except OSError:
             same_source = cwd == str(source)
         if len(bindings) == 1 and cwd in bindings[0][2]:
             same_source = True
-        if not same_source or path.stem != native_id:
+        if not same_source or (path.stem.lower() != found_id.lower() if native_id is not None else path.stem != found_id):
             continue
         owner, status = (bindings[0][:2] if len(bindings) == 1 else (None, None))
         availability = 'legacy' if owner is None else ('active' if status == 'OPEN' else 'unavailable' if status=='UNAVAILABLE' else ('archived' if status in ('DELIVERED', 'DISCARDED') else 'ready'))
         if len(records)>=MAX_SESSIONS:
             _problem(problems,profile,'session_count_budget');return records
         records.append({
-            'id': _opaque(profile, 'claude', owner, home / '.claude', native_id, path), 'profile': profile,
-            'runtime': 'claude', 'native_id': native_id, 'launcher_session_id': owner,
+            'id': _opaque(profile, 'claude', owner, home / '.claude', found_id, path), 'profile': profile,
+            'runtime': 'claude', 'native_id': found_id, 'launcher_session_id': owner,
             'source_root': str(source), 'native_home': str(home / '.claude'), 'transcript_path': str(path),
             'archived': False, 'availability': 'unavailable' if len(bindings) > 1 else availability,
             'can_resume': len(bindings) <= 1 and availability in ('legacy', 'ready'), 'can_fork': len(bindings) <= 1 and availability in ('legacy','ready','archived'),

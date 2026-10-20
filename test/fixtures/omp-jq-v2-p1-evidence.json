@@ -1,0 +1,99 @@
+{
+  "observation": {
+    "guard_or_locator_replacement": false,
+    "jq_binary_copy": false,
+    "jq_real_query": {
+      "argv": [
+        "/opt/homebrew/Cellar/jq/1.8.2/bin/jq",
+        "-e",
+        ".fixture == true and .n == 7"
+      ],
+      "exit": 0,
+      "stdout": "true\n"
+    },
+    "manifest_jq_bindings": [
+      {
+        "name": "jq",
+        "path": "/opt/homebrew/Cellar/jq/1.8.2/bin/jq",
+        "sha256": "b4bac957181d954ca5a440f34617f8309416777b30fba402a7297e8c716c7e3a"
+      }
+    ],
+    "native_calls": 0,
+    "non_system_physical_proof": true,
+    "physical": "/opt/homebrew/Cellar/jq/1.8.2/bin/jq",
+    "physical_parent": "/opt/homebrew/Cellar/jq/1.8.2/bin",
+    "reason": null,
+    "selected": {
+      "name": "jq",
+      "path": "/opt/homebrew/Cellar/jq/1.8.2/bin/jq",
+      "sha256": "b4bac957181d954ca5a440f34617f8309416777b30fba402a7297e8c716c7e3a"
+    },
+    "status": "PASS",
+    "system_jq": null
+  },
+  "provenance": {
+    "head": "449e1f2776a3555f23ef41cf5f375178a494f5d5",
+    "job": 118499176581,
+    "line": 243,
+    "line_sha256": "8bb1a4784ced6f04655ee53203db99fbc13bb8f0ea418681f249c1580a6c8fc6",
+    "source_receipt_sha256": "e2109915288cf48d6e8050546714ce5e3c2c31c678155729e275a21e4bcf0b72",
+    "whole_log_sha256": "57682781391bbc85ab2c11032f0f9cac5fd17a4484a78fc5d1d328de41fa3f81"
+  },
+  "schema": "w07.jq-fallback-evidence/v2",
+  "source_pins": [
+    {
+      "bytes": 6108,
+      "mode": "0644",
+      "path": "test/omp-real-jq-binding.py",
+      "sha256": "f2aaf3d538e4a0b3739326f809457d8213502dd8dec035528ce9e3bb84cc4582"
+    },
+    {
+      "bytes": 34730,
+      "mode": "0644",
+      "path": "test/test-omp-continuation.sh",
+      "sha256": "6ebbf88073e714ec4896fe76199924dbeccf76cd0e6d9ced82c8bf8772f60a15"
+    },
+    {
+      "bytes": 6736,
+      "mode": "0644",
+      "path": "test/omp-fixture-source.py",
+      "sha256": "09a5f838c5b5e412509fcd89b82507955f21bda437844556392b12ccc12a7bc2"
+    },
+    {
+      "bytes": 2212,
+      "mode": "0644",
+      "path": "test/omp-fixture-policy.json",
+      "sha256": "7669649f4d2908322cfa4ad794a8cb2dca75f4cf85a8d61ec5c9796c8cb17349"
+    },
+    {
+      "bytes": 45253,
+      "mode": "0644",
+      "path": "bin/harness_omp_projection.py",
+      "sha256": "68e0b633c8864a9c4154e9ee68182a80d2e8023f62fc9b86b242d1974211a899"
+    },
+    {
+      "bytes": 77169,
+      "mode": "0644",
+      "path": "test/fixtures/w07-source/core/scripts/harness_compile.py",
+      "sha256": "5373059628cf3cd4fd667a1245d3b24e2f65602fa7b053f7051ac2fa743cd50c"
+    },
+    {
+      "bytes": 26793,
+      "mode": "0644",
+      "path": "test/fixtures/w07-source/core/scripts/omp_required_extension.ts",
+      "sha256": "6d80c1e53f77d5f020da9e71ba1758b632cf4dddc6bbb3366bfc3114c6c27e19"
+    },
+    {
+      "bytes": 3183,
+      "mode": "0755",
+      "path": "test/fixtures/w07-source/core/bin/harness-python",
+      "sha256": "5eb87174172151165c40de9bd1f0369a078c955c5ff0cecce46652dac1baeb1f"
+    },
+    {
+      "bytes": 6832,
+      "mode": "0755",
+      "path": "test/fixtures/w07-source/core/hooks/pre-bash-curl-block.sh",
+      "sha256": "8a75eeed2be986e4c87ec400aad69544f5ef942f40d1ab7ac360e6c855e01275"
+    }
+  ]
+}

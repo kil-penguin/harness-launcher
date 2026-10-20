@@ -259,6 +259,47 @@ harness_claude_launch_settings() {
   [ -z "$out" ] || printf '%s\n' "{$out}"
 }
 
+# harness_claude_export_durable_tmpdir
+#   Interactive Claude only (call inside the process that execs Claude, never in
+#   the user's shell): when CLAUDE_CODE_TMPDIR is unset, export
+#   ${XDG_STATE_HOME:-$HOME/.local/state}/cct so session scratchpads survive a
+#   reboot (the default lives under /private/tmp, which macOS clears). Set only
+#   when the base path is <= 40 bytes (Claude's sockets live below it and
+#   AF_UNIX paths are short), the directory is (created) 0700, owned, not a
+#   symlink, and a write probe succeeds. A preset value is never replaced and
+#   harness-headless keeps its own private run dir. Never fails the launch.
+harness_claude_export_durable_tmpdir() {
+  [ -z "${CLAUDE_CODE_TMPDIR:-}" ] || return 0
+  [ "${HARNESS_HEADLESS:-0}" != 1 ] || return 0
+  local state base mode probe
+  state="${XDG_STATE_HOME:-}"
+  if [ -z "$state" ]; then
+    [ -n "${HOME:-}" ] || return 0
+    state="$HOME/.local/state"
+  fi
+  base="$state/cct"
+  case "$base" in /*) ;; *) return 0 ;; esac
+  [ "$(printf '%s' "$base" | wc -c | tr -d ' ')" -le 40 ] || return 0
+  [ ! -L "$base" ] || return 0
+  if [ ! -e "$base" ]; then
+    (umask 077; mkdir -p "$state" 2>/dev/null; mkdir -m 700 "$base" 2>/dev/null) || return 0
+  fi
+  [ -d "$base" ] && [ ! -L "$base" ] && [ -O "$base" ] || return 0
+  chmod 700 "$base" 2>/dev/null || return 0
+  mode="$(command stat -c %a "$base" 2>/dev/null || command stat -f %Lp "$base" 2>/dev/null)"
+  [ "$mode" = 700 ] || return 0
+  probe="$base/.probe.$$"
+  (umask 077; : > "$probe") 2>/dev/null || return 0
+  rm -f "$probe" 2>/dev/null
+  [ -e "$base/.metadata_never_index" ] || { : > "$base/.metadata_never_index"; } 2>/dev/null || true
+  # Keep scratchpads out of Time Machine backups, once (best effort).
+  if [ ! -e "$base/.tm-excluded" ] && command -v tmutil >/dev/null 2>&1; then
+    if tmutil addexclusion "$base" >/dev/null 2>&1; then { : > "$base/.tm-excluded"; } 2>/dev/null || true; fi
+  fi
+  export CLAUDE_CODE_TMPDIR="$base"
+  return 0
+}
+
 # harness_headless_session_settings <session-root>
 #   harness-headless only: settings that need the session path, merged into the
 #   single Claude --settings. The session git config, hooks and info dir are

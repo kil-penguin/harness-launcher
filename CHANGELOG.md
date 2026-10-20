@@ -2,6 +2,40 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## 0.68.0 — 2026-10-20
+
+- Restore launch settings after a reboot for top-level launches only. A new
+  `harness_launch_context.py` decides whether a person started the launch: a
+  foreground terminal, no agent marker in the environment, and a complete
+  agent-free process ancestry. Anything unknown counts as nested.
+- Claude forks now inherit the origin's recorded permission mode, model, effort
+  and 1M context when the launch is top-level and the record is bound to the
+  verified origin owner (same source root, isolated, same session id). A nested
+  or unbound fork keeps `--permission-mode default`. The record joins the fork
+  proof, so a swapped record is refused before exec. A mode or model keyword
+  (`fast`, `base`, `plan`, `opus`, `rich`, `fable`, `ultracode`) sets its own
+  model and effort, so it suppresses the inherited ones; permission inheritance
+  is unaffected. Inheritance takes effect once the caller passes the prepared
+  `inherited` settings (the profile dispatcher change ships separately).
+- Codex history imports re-apply the origin's recorded approval/sandbox/profile
+  for top-level launches. The catalog row now carries `origin_state_home`, and
+  the record is read only from that pool and only when bound to the origin. A
+  nested (agent-run) import no longer re-applies a destination-pool record that 0.67.0
+  could pick up.
+- The exact-id Claude fork catalog lists only project directories and the target
+  name, and the Claude catalogs skip `subagents/` trees. On a large
+  `~/.claude/projects` the fork no longer fails `fork_catalog_incomplete`.
+- OMP projection and continuation records accept an APFS device renumbering when
+  the inode and every other field match and the whole directory chain to its
+  anchor moved to one new device.
+- The full Codex history catalog walks each home's stat signature twice per call
+  instead of once per row (1135 s to about 97 s on a 13 GB history). A home that
+  changes during the call is inventoried again once, then held.
+- Interactive Claude launches set `CLAUDE_CODE_TMPDIR` to an owner-private
+  `${XDG_STATE_HOME:-~/.local/state}/cct` when unset, so the scratchpad survives
+  a reboot. Headless runs keep their private temp directory and deny writes to
+  the durable one.
+
 ## 0.67.0 — 2026-10-20
 
 - Make isolated-session root identity tolerant of APFS device renumbering after

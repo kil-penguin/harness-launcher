@@ -717,11 +717,36 @@ def catalog_value(args, keep_private=False):
     if native_id:
         if not UUID.fullmatch(native_id):refuse("invalid selected native UUID")
         entries=[row for row in entries if row['native_id'].lower()==native_id.lower()]
-    rows=dedupe_entries(entries,current/'native-history',keep_private)
+    rows=dedupe_entries(entries,current/'native-history',True)
+    pools=[current]+([Path(legacy)] if legacy and Path(legacy)!=current else [])
     for row in rows:
         if incomplete_hints or row['native_id'].lower() in held_ids:
             row.update(status='ambiguous',reason='unverified_native_owner_hints_incomplete' if incomplete_hints else 'unverified_native_owner')
+        row['origin_state_home']=origin_state_home(row,source,pools,Path(legacy) if legacy else None)
+    if not keep_private:rows=[{key:value for key,value in row.items() if not key.startswith('_')} for row in rows]
     return {'schema_version':1,'entries':rows,'warnings':warnings}
+
+
+def origin_state_home(row,source,pools,legacy):
+    """State home that owns the launch record of this row's origin, or ''.
+
+    Live row: P of <P>/worktrees/<id>/.harness/codex. Snapshot row: the same rule
+    on the manifest source. Canonical origin: the legacy XDG home. P must equal
+    exactly one configured pool; anything else grants nothing."""
+    try:
+        if row['status']=='canonical':origin=source/'.harness/codex'
+        elif row['status']=='snapshot':origin=Path(row['_source_home'])
+        else:origin=Path(row['home'])
+        if origin==source/'.harness/codex':
+            return str(legacy) if legacy is not None else ''
+        isolation=row.get('isolation_id') or ''
+        if not UUID.fullmatch(isolation):return ''
+        if origin.name!='codex' or origin.parent.name!='.harness' or origin.parent.parent.name!=isolation or origin.parent.parent.parent.name!='worktrees':return ''
+        pool=origin.parent.parent.parent.parent
+        matches=[p for p in pools if p==pool]
+        return str(matches[0]) if len(matches)==1 else ''
+    except (KeyError,TypeError,ValueError):
+        return ''
 
 
 def binding_origin(state, identifier, source):
@@ -896,20 +921,51 @@ def inventory_signature(home,children):
 
 
 def dedupe_entries(entries,store,keep_private=False):
-    cache={}
-    def inventory(home):
-        # The sha256 inventory is reused only while the stat signature is equal,
-        # so a home that changes during this call is inventoried again.
-        home=Path(home);children=source_children(home)
-        signature=inventory_signature(home,children)
-        hit=cache.get(home)
-        if hit is not None and hit[0]==signature:return hit[1]
-        value=source_inventory(home,children);cache[home]=(signature,value)
-        return value
+    """Decide every row; each home's stat signature is walked once when first
+    needed and once after all rows are decided. A home that changed in between
+    is inventoried again and the dedupe is redone once; a home that changes
+    again holds every row that used it."""
+    state={}
+    def inventory(home,used):
+        home=Path(home);used.add(home)
+        hit=state.get(home)
+        if hit is None:
+            try:
+                children=source_children(home)
+                signature=inventory_signature(home,children)
+                hit=state[home]=(children,signature,source_inventory(home,children))
+            except (OSError,Refusal):
+                # unreadable now: never equal to a recorded inventory, and always held as changed
+                hit=state[home]=((),None,[])
+        return hit[2]
+    def changed(home,children,signature):
+        if signature is None:return True
+        try:return inventory_signature(home,children)!=signature
+        except OSError:return True  # a home that vanished or became unreadable counts as changed
+    def changed_homes():
+        return {home for home,(children,signature,_) in state.items() if changed(home,children,signature)}
+    decided=decide_entries(entries,store,inventory)
+    unstable=changed_homes()
+    if unstable:
+        for home in unstable:del state[home]
+        decided=decide_entries(entries,store,inventory)
+        unstable=changed_homes()
+    result=[]
+    for row,used in decided:
+        if used&unstable:row.update(status='ambiguous',reason='source_changed_during_catalog')
+        result.append(row if keep_private else {key:value for key,value in row.items() if not key.startswith('_')})
+    return sorted(result,key=lambda row:row['native_id'])
+
+
+def decide_entries(entries,store,inventory_of):
+    """One dedupe pass; returns (row, homes whose inventory it consulted) pairs."""
+    used=set()
+    def inventory(home):return inventory_of(home,used)
     groups={}
     for row in entries:groups.setdefault(row['native_id'],[]).append(row)
     result=[]
     for identifier,rows in groups.items():
+        used.clear()
         superseded=set();lineage_valid=True
         for entry in rows:
             if not entry.get('_lineage'):continue
@@ -950,8 +1006,8 @@ def dedupe_entries(entries,store,keep_private=False):
             row=max(archives,key=lambda a:(int(a['updated_at']),a['_capture_time'])).copy()
             if len(owners)>1:row.update(status='ambiguous',reason='duplicate_archive_owner')
         if not lineage_valid:row.update(status='ambiguous',reason='diverged_restore_origin')
-        result.append(row if keep_private else {key:value for key,value in row.items() if not key.startswith('_')})
-    return sorted(result,key=lambda row:row['native_id'])
+        result.append((row,set(used)))
+    return result
 
 
 def recorded_source(path, root):
