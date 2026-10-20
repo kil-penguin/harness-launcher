@@ -29,7 +29,7 @@ AGENT_MARKERS = (
     "CODEX_SANDBOX",
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "HARNESS_SESSION_ID",
-    # lets a caller that strips HARNESS_SESSION_ID (the kh dispatcher) still signal a nested launch
+    # A dispatcher that strips HARNESS_SESSION_ID can still signal a nested launch.
     "HARNESS_PARENT_SESSION_ID",
 )
 # `node` covers an npm-installed Claude Code, whose executable is node.

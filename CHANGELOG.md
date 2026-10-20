@@ -16,11 +16,11 @@ Notable changes are recorded here. This project follows semantic versioning for 
   (`fast`, `base`, `plan`, `opus`, `rich`, `fable`, `ultracode`) sets its own
   model and effort, so it suppresses the inherited ones; permission inheritance
   is unaffected. Inheritance takes effect once the caller passes the prepared
-  `inherited` settings (the kh dispatcher change ships separately).
+  `inherited` settings (the profile dispatcher change ships separately).
 - Codex history imports re-apply the origin's recorded approval/sandbox/profile
   for top-level launches. The catalog row now carries `origin_state_home`, and
   the record is read only from that pool and only when bound to the origin. A
-  nested (agent-run) import no longer re-applies a kh-pool record that 0.67.0
+  nested (agent-run) import no longer re-applies a destination-pool record that 0.67.0
   could pick up.
 - The exact-id Claude fork catalog lists only project directories and the target
   name, and the Claude catalogs skip `subagents/` trees. On a large
