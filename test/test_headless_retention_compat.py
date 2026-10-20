@@ -1,5 +1,6 @@
 """Old immutable headless drops policy; the managed new entry must replace it."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -45,11 +46,17 @@ class CompatibilityTests(unittest.TestCase):
                 new_env=current.child_env(str(base/'new-tmp'))
             self.assertNotIn('HARNESS_SESSION_RETENTION_SECONDS',old_env)
             self.assertEqual(new_env['HARNESS_SESSION_RETENTION_SECONDS'],'archive')
+            native=base/'native-unavailable';native.write_text('#!/bin/sh\nexit 1\n');native.chmod(0o700)
+            # Broker GC gets the owned rejecting binary explicitly; child_env
+            # intentionally does not forward arbitrary executable overrides.
+            new_env=dict(new_env,HARNESS_CODEX_BIN=str(native))
             for tag in ('old','new'):
                 fields=dict(line.split('=',1) for line in run([str(ROOT/'bin/session-isolation.sh'),'create',str(source)],env=env).splitlines() if '=' in line)
                 owner=fields['HARNESS_SESSION_ID'];work=Path(fields['HARNESS_SESSION_ROOT'])
                 transcript=work/'.harness/codex/sessions/2026/10/10/rollout-fixture-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.jsonl'
-                transcript.parent.mkdir(parents=True);transcript.write_text('synthetic conversation retained exactly\n')
+                transcript.parent.mkdir(parents=True)
+                transcript.write_text(json.dumps({'type':'session_meta','payload':{'id':'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee','cwd':str(work)}})+'\n'+
+                                      json.dumps({'type':'response_item','payload':{'type':'message','role':'user','content':[{'type':'input_text','text':'synthetic conversation retained exactly'}]}})+'\n')
                 original=transcript.read_bytes()
                 run([str(ROOT/'bin/session-isolation.sh'),'close',owner],env=env)
                 journal=state/'sessions'/owner/'journal'
@@ -61,7 +68,9 @@ class CompatibilityTests(unittest.TestCase):
                     self.assertFalse(work.exists());self.assertFalse((state/'archives'/owner).exists())
                 else:
                     run([str(ROOT/'bin/session-isolation.sh'),'gc'],env=new_env)
-                    self.assertFalse(work.exists())
+                    # Transcript backup alone cannot authorize Native root deletion.
+                    self.assertTrue(work.exists())
+                    self.assertEqual(transcript.read_bytes(),original)
                     self.assertEqual((state/'archives'/owner/'codex'/transcript.relative_to(work/'.harness/codex')).read_bytes(),original)
 
 
