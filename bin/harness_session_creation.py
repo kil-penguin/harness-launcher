@@ -441,6 +441,8 @@ class Creation:
         finally:
             if diagnostic_fd is not None:
                 os.close(diagnostic_fd)
+        if child.returncode == 78 and inherited.get('HARNESS_HEADLESS') == '1':
+            raise CreationError('headless clone refused')
         if child.returncode:
             raise CreationError(f"reserved engine preparation failed (exit {child.returncode})")
         lines = stdout.splitlines()

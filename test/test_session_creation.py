@@ -25,6 +25,43 @@ def _creation_module():
 
 
 class SessionCreationContractTest(unittest.TestCase):
+    def test_child_stderr_cannot_supply_the_headless_refusal_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            source = base / 'source'; source.mkdir()
+            engine = base / 'engine'
+            engine.write_text('#!/bin/sh\necho "headless clone refused SECRET-PAYLOAD" >&2\nexit 2\n')
+            engine.chmod(0o700)
+            done = subprocess.run([sys.executable, '-I', str(ROOT / 'bin/harness_session_creation.py'),
+                                   'legacy-create', '--engine', str(engine), '--state', str(base / 'state'), str(source)],
+                                  env=dict(os.environ, HARNESS_HEADLESS='1'), capture_output=True, text=True, timeout=10)
+            self.assertEqual(done.returncode, 2)
+            self.assertNotIn('SECRET-PAYLOAD', done.stderr)
+            self.assertNotIn('headless clone refused', done.stderr)
+
+    def test_legacy_headless_clone_refusal_keeps_its_typed_outcome_and_cleans_own_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            source, state, outside = base / 'source', base / 'state', base / 'outside'
+            source.mkdir(); outside.mkdir()
+            subprocess.run(['git', 'init', '-q', '-b', 'main', str(source)], check=True)
+            subprocess.run(['git', '-C', str(source), 'config', 'user.name', 'fixture'], check=True)
+            subprocess.run(['git', '-C', str(source), 'config', 'user.email', 'fixture@example.invalid'], check=True)
+            (source / '.claude').symlink_to(outside, target_is_directory=True)
+            subprocess.run(['git', '-C', str(source), 'add', '.claude'], check=True)
+            subprocess.run(['git', '-C', str(source), 'commit', '-qm', 'tracked symlink'], check=True)
+            (source / '.claude').unlink(); (source / '.claude').mkdir()
+            (source / '.claude/settings.local.json').write_text('{}')
+            environment = dict(os.environ, HARNESS_SESSION_STATE_HOME=str(state),
+                               HARNESS_HEADLESS='1', HARNESS_PYTHON_BIN=sys.executable)
+            done = subprocess.run([str(ROOT / 'bin/session-isolation.sh'), 'create', '--local', str(source)],
+                                  env=environment, capture_output=True, text=True, timeout=15)
+            self.assertEqual(done.returncode, 2, done.stderr)
+            self.assertIn('headless clone refused', done.stderr)
+            self.assertFalse((outside / 'settings.local.json').exists())
+            self.assertEqual(list((state / 'sessions').iterdir()), [])
+            self.assertEqual(list((state / 'worktrees').iterdir()), [])
+
     def test_state_spelling_survives_parent_alias_for_legacy_consumers(self) -> None:
         """Legacy catalog compares the configured state prefix with session-root."""
         creation_module = _creation_module()

@@ -275,7 +275,10 @@ create() {
   rm -rf "$root/config/.local"
   if [[ "${HARNESS_HEADLESS:-0}" == 1 ]]; then
     headless_local_files "$source" "$root" || {
-      [[ -n "$reserved_id" ]] || rm -rf "$dir"
+      # Reserved cleanup belongs to the lease/identity-checked parent. A fixed
+      # internal status preserves the public refusal outcome without raw stderr.
+      [[ -z "$reserved_id" ]] || return 78
+      rm -rf "$dir"
       rm -rf "$root"
       return 2
     }
