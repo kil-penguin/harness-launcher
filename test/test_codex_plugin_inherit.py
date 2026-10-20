@@ -452,19 +452,21 @@ class InheritTests(unittest.TestCase):
         layout = Layout(self)
         real = self.module._trust()
         moved = layout.tmp / "moved-root"
-        def broker_source(published):
-            result = real.broker_source(published)
+        trust = mock.Mock(broker_source=real.broker_source, regular=real.regular)
+        verified = self.module._verified_root_identity
+        def swap_after_verification(recorded, target):
+            result = verified(recorded, target)
             layout.target.rename(moved)
             shutil.copytree(moved, layout.target)
             return result
-        trust = mock.Mock(broker_source=broker_source, regular=real.regular)
         before = (layout.home / "config.toml").read_bytes()
-        notices = self.module.ensure(layout.home, trust)
+        with mock.patch.object(self.module, "_verified_root_identity", swap_after_verification):
+            notices = self.module.ensure(layout.home, trust)
         self.assertEqual(before, (layout.home / "config.toml").read_bytes())
         self.assertEqual(before, (moved / ".harness/codex/config.toml").read_bytes())
         self.assertFalse((layout.home / "plugins").exists())
         self.assertFalse((moved / ".harness/codex/plugins").exists())
-        self.assertTrue(any("session root replaced" in notice for notice in notices), notices)
+        self.assertTrue(any("session root replaced after verification" in notice for notice in notices), notices)
 
     def test_crash_after_config_before_record_is_converged(self):
         layout = Layout(self)

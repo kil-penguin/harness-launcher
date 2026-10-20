@@ -123,6 +123,8 @@ root_identity() { stat -f '%d %i' "$1" 2>/dev/null || stat -c '%d %i' "$1"; }
 # filesystem has a different device from its parent and is refused.
 root_identity_matches() {
   local recorded="$1" root="$2" current parent rdev rino cdev cino extra
+  [[ "$recorded" != *$'\n'* ]] || return 1
+  while [[ "$root" == */?* && "$root" == */ ]]; do root="${root%/}"; done
   current="$(root_identity "$root")" || return 1
   read -r rdev rino extra <<<"$recorded"
   read -r cdev cino <<<"$current"

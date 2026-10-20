@@ -82,7 +82,7 @@ def _fstat(fd):
 
 
 def _stat(path):
-    return os.stat(path)
+    return os.lstat(path)
 
 
 def _verified_root_identity(recorded, target):

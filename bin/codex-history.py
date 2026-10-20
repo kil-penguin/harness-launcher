@@ -887,7 +887,7 @@ def inventory_signature(home,children):
     rows=[]
     def add(path):
         info=path.lstat()
-        rows.append((path.relative_to(home).as_posix(),info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns))
+        rows.append((path.relative_to(home).as_posix(),info.st_dev,info.st_ino,info.st_mode,info.st_size,info.st_mtime_ns,info.st_ctime_ns))
     for path in home.iterdir():add(path)
     for child in children:
         if child.is_dir():

@@ -44,8 +44,15 @@ FAKE_PATH="" FAKE_DEV=""
 printf 'garbage\n' > "$dir/root-inode"
 expect refuse 'malformed record'
 printf '%s %s\n' "$((dev + 1))" "$ino" > "$dir/root-inode"
-rmdir "$root"; mkdir "$root"
+mkdir "$root.new"; rmdir "$root"; mv "$root.new" "$root"
 expect refuse 'root replaced by a fresh directory'
 rm -rf "$root"; ln -s "$TMP" "$root"
 expect refuse 'root replaced by a symlink'
+printf '%s %s\n' "$dev" "$ino" > "$dir/root-inode"
+mkdir -p "$TMP/real-root"; read -r dev2 ino2 < <(root_identity "$TMP/real-root")
+root="$TMP/real-root"; printf '%s %s\n' "$((dev2 + 1))" "$ino2" > "$dir/root-inode"
+root="$TMP/real-root/"
+expect ok 'trailing slash is normalized before deriving the parent'
+printf '%s %s\n%s %s\n' "$((dev2 + 1))" "$ino2" 1 2 > "$dir/root-inode"
+expect refuse 'multi-line record'
 echo 'PASS: root_intact tolerates device renumbering only for the same inode on the worktrees device'

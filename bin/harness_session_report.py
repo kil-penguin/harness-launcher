@@ -36,7 +36,7 @@ def check_deadline(budget):
 
 
 def parent_device(root):
-    return os.stat(Path(root).parent).st_dev
+    return os.lstat(Path(root).parent).st_dev
 
 
 def root_identity_matches(recorded, info, root):
