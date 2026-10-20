@@ -29,6 +29,10 @@ NATIVE_THREAD_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 PARENT_THREAD_ID = "ffffffff-1111-4222-8333-444444444444"
 
 
+def uuid_hex():
+    return os.urandom(6).hex()
+
+
 def digest_tree(root, excluded=()):
     entries = []
     for path in sorted(root.rglob("*")):
@@ -1214,6 +1218,135 @@ class RootIdentityTest(unittest.TestCase):
                     else:
                         with self.assertRaisesRegex(history_module.Refusal, "Native tomb binding mismatch"):
                             self.protect(state)
+
+
+class CatalogCostTest(unittest.TestCase):
+    """D3: an exact-id catalog equals the full catalog's target row; inventory is computed once."""
+
+    setUp = CodexHistoryTest.setUp
+    _make_home = CodexHistoryTest._make_home
+    _make_auxiliary_db = CodexHistoryTest._make_auxiliary_db
+    _make_state_db = CodexHistoryTest._make_state_db
+    _make_history_db = CodexHistoryTest._make_history_db
+    run_history = CodexHistoryTest.run_history
+
+    def hide_canonical(self):
+        shutil.move(self.home, self.base / ("hidden-canonical-" + uuid_hex()))
+
+    def iso_home(self, state, identifier, native=None):
+        root, record = state / "worktrees" / identifier, state / "sessions" / identifier
+        home = root / ".harness/codex"
+        shutil.copytree(self.home, home, symlinks=True)
+        if native:
+            rollout = next(path for path in (home / "sessions").rglob("*.jsonl") if "session_meta" in path.read_text())
+            value = json.loads(rollout.read_text().splitlines()[0]); value["payload"]["id"] = native
+            rollout.write_text(json.dumps(value) + "\n")
+        record.mkdir(parents=True)
+        for name, value in (("source-root", str(self.source_root)), ("session-root", str(root)),
+                            ("root-inode", history_module.root_inode(root)), ("runtime.lock", ""),
+                            ("lease-v1", "1\n"), ("journal", "state=CLOSED\nidentity=\nheartbeat=2026-10-10T00:00:00Z\n")):
+            (record / name).write_text(value)
+        return root, record, home
+
+    def snap(self, state, identifier, home, record):
+        return json.loads(self.run_history(
+            "snapshot", "--source", str(home), "--catalog", str(state / "native-history"),
+            "--receipt", str(record / ("snap-" + uuid_hex() + ".json")), "--source-root", str(self.source_root),
+            "--isolation-id", identifier, "--runtime-revision", RUNTIME_REVISION).stdout)
+
+    def args(self, state, native=None):
+        values = {"source_root": str(self.source_root), "state_home": str(state), "legacy_state_home": None}
+        if native:
+            values["native_id"] = native
+        return type("Args", (), values)()
+
+    A, B = "11111111-2222-4333-8444-55555555555a", "11111111-2222-4333-8444-55555555555b"
+
+    def scenario_live_and_archive(self, state):
+        root, record, home = self.iso_home(state, self.A)
+        self.snap(state, self.A, home, record)
+        self.hide_canonical()
+
+    def scenario_held_ids(self, state):
+        root, record, home = self.iso_home(state, self.A)
+        (record / "root-inode").write_text("0 0\n")
+
+    def scenario_incomplete_hints(self, state):
+        self.scenario_held_ids(state)
+        for path in (state / "worktrees" / self.A / ".harness/codex/sessions").rglob("*.jsonl"):
+            path.rename(path.with_name("rollout-no-identifier.jsonl"))
+            break
+
+    def scenario_restored_lineage(self, state):
+        first = json.loads(self.run_history("prepare", "--source-root", str(self.source_root),
+                           "--state-home", str(state), "--native-id", NATIVE_THREAD_ID).stdout)
+        root, record = state / "worktrees" / self.B, state / "sessions" / self.B
+        (root / ".harness/codex").mkdir(parents=True); record.mkdir(parents=True)
+        for name, value in (("source-root", str(self.source_root)), ("session-root", str(root)),
+                            ("root-inode", history_module.root_inode(root)), ("runtime.lock", ""),
+                            ("lease-v1", "1\n"), ("journal", "state=CLOSED\nidentity=\nheartbeat=2026-10-10T00:00:00Z\n")):
+            (record / name).write_text(value)
+        self.run_history("restore", "--catalog", str(state / "native-history"), "--snapshot", first["snapshot_id"],
+                         "--destination", str(root / ".harness/codex"), "--receipt", str(record / "native-history-restore.json"),
+                         "--native-id", NATIVE_THREAD_ID, "--origin-runtime", first["origin_runtime"])
+
+    def scenario_imported_suppression(self, state):
+        child = "22222222-2222-4333-8444-555555555556"
+        self.iso_home(state, self.A)
+        new_root, new_record, new_home = self.iso_home(state, self.B)
+        rollout = next(path for path in (new_home / "sessions").rglob("*.jsonl") if NATIVE_THREAD_ID in path.name)
+        (rollout.parent / ("rollout-child-" + child + ".jsonl")).write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": child}}) + "\n")
+        ledger = new_record / "restored-native-sessions"
+        ledger.write_text(json.dumps({"schema": 1, "session_id": self.B, "source_root": str(self.source_root.resolve()),
+            "imports": [{"runtime": "codex", "native_id": NATIVE_THREAD_ID, "source_owner": self.A}]}, sort_keys=True) + "\n")
+        ledger.chmod(0o600)
+        self.hide_canonical()
+
+    def scenario_duplicate_live(self, state):
+        self.iso_home(state, self.A)
+        self.iso_home(state, self.B)
+        self.hide_canonical()
+
+    def scenario_duplicate_archive(self, state):
+        for identifier in (self.A, self.B):
+            root, record, home = self.iso_home(state, identifier)
+            self.snap(state, identifier, home, record)
+            shutil.move(root, self.base / ("moved-" + identifier))
+        self.hide_canonical()
+
+    SCENARIOS = ("live_and_archive", "held_ids", "incomplete_hints", "restored_lineage",
+                 "imported_suppression", "duplicate_live", "duplicate_archive")
+
+    def test_filtered_catalog_gives_the_complete_target_row_of_the_full_catalog(self):
+        for name in self.SCENARIOS:
+            for target in (NATIVE_THREAD_ID, NATIVE_THREAD_ID.upper()):
+                with self.subTest(scenario=name, target=target):
+                    state = self.base / ("scenario-" + name)
+                    if not state.exists():
+                        self._make_home()
+                        getattr(self, "scenario_" + name)(state)
+                    full = history_module.catalog_value(self.args(state))
+                    wanted = [row for row in full["entries"] if row["native_id"].lower() == NATIVE_THREAD_ID]
+                    self.assertTrue(wanted, name)
+                    filtered = history_module.catalog_value(self.args(state, target))
+                    self.assertEqual(filtered["entries"], wanted)
+                    self.assertEqual(filtered["warnings"], full["warnings"])
+                    self.assertEqual(filtered["schema_version"], 1)
+                    cli = json.loads(self.run_history("catalog", "--source-root", str(self.source_root),
+                                                      "--state-home", str(state), "--native-id", target).stdout)
+                    self.assertEqual(cli, filtered)
+            self.assertEqual(self.EXPECTED[name], sorted((r["status"], r["reason"], bool(r["snapshot_id"])) for r in wanted), name)
+
+    EXPECTED = {
+        "live_and_archive": [("live", None, True)],
+        "held_ids": [("ambiguous", "unverified_native_owner", False)],
+        "incomplete_hints": [("ambiguous", "unverified_native_owner_hints_incomplete", False)],
+        "restored_lineage": [("live", None, False)],
+        "imported_suppression": [("live", None, False)],
+        "duplicate_live": [("ambiguous", "duplicate_live_owner", False)],
+        "duplicate_archive": [("ambiguous", "duplicate_archive_owner", True)],
+    }
 
 
 if __name__ == "__main__":

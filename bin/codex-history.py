@@ -711,6 +711,12 @@ def catalog_value(args, keep_private=False):
             for row in rows:row.update(_store=str(state/'native-history'),_state_home=str(state))
             entries.extend(rows)
         entries.extend(snapshot_entries(state/'native-history',source))
+    # Only the requested id is deduped; held_ids and incomplete_hints above were
+    # already collected from every quarantined home, so the verdict is unchanged.
+    native_id=getattr(args,'native_id',None)
+    if native_id:
+        if not UUID.fullmatch(native_id):refuse("invalid selected native UUID")
+        entries=[row for row in entries if row['native_id'].lower()==native_id.lower()]
     rows=dedupe_entries(entries,current/'native-history',keep_private)
     for row in rows:
         if incomplete_hints or row['native_id'].lower() in held_ids:
@@ -1165,6 +1171,7 @@ def parser():
     catalog_parser.add_argument("--source-root", required=True)
     catalog_parser.add_argument("--state-home", required=True)
     catalog_parser.add_argument("--legacy-state-home")
+    catalog_parser.add_argument("--native-id")
     pool = commands.add_parser("protect-pool")
     for name in ("state-home", "source-root"):
         pool.add_argument("--" + name, required=True)
