@@ -311,14 +311,14 @@ def state_home(env):
     return Path(base, 'harness-launcher')
 
 
-def mandatory_settings(source, home, caller_deny_read, run_tmp=None, effort=None):
+def mandatory_settings(source, home, caller_deny_read, run_tmp=None, effort=None, state_base=None):
     """Launcher-owned containment. Passed last, so the launcher's settings
     merge (dicts deep-merged, lists unioned, scalars last-wins) keeps every
     value here over any earlier --settings. Every sandbox read-denied path is
     also denied to the Read and edit tools, which the sandbox does not cover.
     --effort is effortLevel here; xhigh needs thinking on (as the launcher
     forces for its own xhigh), whatever the user settings say."""
-    settings = _mandatory_settings(source, home, caller_deny_read, run_tmp)
+    settings = _mandatory_settings(source, home, caller_deny_read, run_tmp, state_base)
     if effort:
         settings['effortLevel'] = effort
         if effort == 'xhigh':
@@ -326,7 +326,7 @@ def mandatory_settings(source, home, caller_deny_read, run_tmp=None, effort=None
     return settings
 
 
-def _mandatory_settings(source, home, caller_deny_read, run_tmp):
+def _mandatory_settings(source, home, caller_deny_read, run_tmp, state_base=None):
     uid = os.getuid()
     homes = [os.path.join(home, d) for d in HOME_DENY]
     sources = [source, os.path.realpath(source)]
@@ -336,6 +336,10 @@ def _mandatory_settings(source, home, caller_deny_read, run_tmp):
     # Launcher records (profiles, target records and policy, the endpoint key)
     # are written only by the owner, never by a run.
     deny_write = [f'/private/tmp/claude-{uid}', f'/tmp/claude-{uid}', harness_target.profile_home()]
+    # The launcher's durable interactive scratchpad base (CLAUDE_CODE_TMPDIR for
+    # interactive sessions) holds other sessions' scratchpads; a run never writes it.
+    durable = os.path.join(state_base or os.path.join(home, '.local', 'state'), 'cct')
+    deny_write += list(dict.fromkeys([durable, os.path.realpath(durable)]))
     write_paths = deny_read + [os.path.join(home, d) for d in HOME_WRITE_DENY] + deny_write
     deny = [f'Read(/{path}/**)' for path in deny_read]
     deny += [f'{tool}(/{path}/**)' for path in write_paths for tool in EDIT_TOOLS]
@@ -1023,7 +1027,7 @@ def run_claude(args, caller, hdir, env, state, run_tmp, stdin, timeout, log, log
     if caller is not None:
         command += ['--settings', json.dumps(caller)]
     caller_deny_read = ((caller or {}).get('sandbox') or {}).get('filesystem', {}).get('denyRead', [])
-    settings = mandatory_settings(hdir, env['HOME'], caller_deny_read, run_tmp, args.effort)
+    settings = mandatory_settings(hdir, env['HOME'], caller_deny_read, run_tmp, args.effort, env.get('XDG_STATE_HOME') or None)
     command += ['--settings', json.dumps(settings)]
     with tempfile.TemporaryFile('w+') as out:
         try:

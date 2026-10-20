@@ -335,7 +335,7 @@ class CodexHistoryTest(unittest.TestCase):
         proc = self.run_history("catalog", "--source-root", str(self.source_root), "--state-home", str(state))
         result = json.loads(proc.stdout)
         entry = next(item for item in result["entries"] if item["native_id"] == NATIVE_THREAD_ID)
-        self.assertEqual(set(entry), {"native_id", "home", "source_root", "isolation_id", "origin_runtime", "snapshot_id", "updated_at", "status", "reason", "source_local"})
+        self.assertEqual(set(entry), {"native_id", "home", "source_root", "isolation_id", "origin_runtime", "snapshot_id", "updated_at", "status", "reason", "source_local", "origin_state_home"})
         self.assertEqual(entry["source_root"], str(self.source_root))
         self.assertEqual(entry["isolation_id"], "canonical")
         self.assertEqual(entry["origin_runtime"], "legacy-unknown")
@@ -1443,6 +1443,66 @@ class CatalogCostTest(unittest.TestCase):
         self.assertGreaterEqual(len(held), 4)
         for row in held:
             self.assertEqual((row["status"], row["reason"]), ("ambiguous", "source_changed_during_catalog"))
+
+
+class OriginStateHomeTest(unittest.TestCase):
+    """origin_state_home names the one configured state home that owns a row's origin record."""
+
+    SOURCE = Path("/work/src")
+    CURRENT = Path("/state/current")
+    LEGACY = Path("/state/legacy")
+
+    def origin(self, row, pools=None, legacy="default"):
+        pools = pools if pools is not None else [self.CURRENT, self.LEGACY]
+        legacy = self.LEGACY if legacy == "default" else legacy
+        return history_module.origin_state_home(row, self.SOURCE, pools, legacy)
+
+    def live(self, pool, identifier=ISOLATION_ID):
+        return {"status": "live", "isolation_id": identifier,
+                "home": str(pool / "worktrees" / identifier / ".harness" / "codex")}
+
+    def test_live_row_maps_to_its_pool(self):
+        self.assertEqual(self.origin(self.live(self.CURRENT)), str(self.CURRENT))
+        self.assertEqual(self.origin(self.live(self.LEGACY)), str(self.LEGACY))
+
+    def test_live_row_in_an_unconfigured_pool_grants_nothing(self):
+        self.assertEqual(self.origin(self.live(Path("/state/other"))), "")
+
+    def test_snapshot_row_uses_the_manifest_source_not_the_store(self):
+        row = {"status": "snapshot", "isolation_id": ISOLATION_ID,
+               "home": "/state/current/native-history/snapshots/x/data",
+               "_source_home": str(self.live(self.LEGACY)["home"])}
+        self.assertEqual(self.origin(row), str(self.LEGACY))
+
+    def test_canonical_row_and_canonical_snapshot_map_to_the_legacy_home(self):
+        canonical = {"status": "canonical", "isolation_id": "canonical",
+                     "home": str(self.SOURCE / ".harness" / "codex")}
+        self.assertEqual(self.origin(canonical), str(self.LEGACY))
+        snapshot = {"status": "snapshot", "isolation_id": "canonical", "home": "/s/data",
+                    "_source_home": str(self.SOURCE / ".harness" / "codex")}
+        self.assertEqual(self.origin(snapshot), str(self.LEGACY))
+        self.assertEqual(self.origin(canonical, legacy=None), "")
+
+    def test_malformed_layouts_grant_nothing(self):
+        row = self.live(self.CURRENT)
+        self.assertEqual(self.origin(dict(row, isolation_id="not-a-uuid")), "")
+        self.assertEqual(self.origin(dict(row, home=str(self.CURRENT / "elsewhere" / "codex"))), "")
+        self.assertEqual(self.origin({"status": "live"}), "")
+
+    def test_catalog_rows_carry_the_field_without_private_keys(self):
+        with tempfile.TemporaryDirectory() as name:
+            base = Path(name)
+            source, state = base / "source", base / "state"
+            home = source / ".harness" / "codex" / "sessions" / "2026" / "10" / "10"
+            home.mkdir(parents=True)
+            (home / ("rollout-2026-10-10T01-02-03-%s.jsonl" % NATIVE_THREAD_ID)).write_text(
+                json.dumps({"type": "session_meta", "payload": {"id": NATIVE_THREAD_ID}}) + "\n")
+            state.mkdir()
+            args = types.SimpleNamespace(source_root=str(source), state_home=str(state),
+                                         legacy_state_home=str(base / "legacy"), native_id=None)
+            rows = history_module.catalog_value(args)["entries"]
+            self.assertEqual([row["origin_state_home"] for row in rows], [str(base / "legacy")])
+            self.assertFalse([key for row in rows for key in row if key.startswith("_")])
 
 
 if __name__ == "__main__":
