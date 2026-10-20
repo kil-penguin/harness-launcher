@@ -896,20 +896,44 @@ def inventory_signature(home,children):
 
 
 def dedupe_entries(entries,store,keep_private=False):
-    cache={}
-    def inventory(home):
-        # The sha256 inventory is reused only while the stat signature is equal,
-        # so a home that changes during this call is inventoried again.
-        home=Path(home);children=source_children(home)
-        signature=inventory_signature(home,children)
-        hit=cache.get(home)
-        if hit is not None and hit[0]==signature:return hit[1]
-        value=source_inventory(home,children);cache[home]=(signature,value)
-        return value
+    """Decide every row; each home's stat signature is walked once when first
+    needed and once after all rows are decided. A home that changed in between
+    is inventoried again and the dedupe is redone once; a home that changes
+    again holds every row that used it."""
+    state={}
+    def inventory(home,used):
+        home=Path(home);used.add(home)
+        hit=state.get(home)
+        if hit is None:
+            children=source_children(home)
+            signature=inventory_signature(home,children)
+            hit=state[home]=(children,signature,source_inventory(home,children))
+        return hit[2]
+    def changed_homes():
+        return {home for home,(children,signature,_) in state.items()
+                if inventory_signature(home,children)!=signature}
+    decided=decide_entries(entries,store,inventory)
+    unstable=changed_homes()
+    if unstable:
+        for home in unstable:del state[home]
+        decided=decide_entries(entries,store,inventory)
+        unstable=changed_homes()
+    result=[]
+    for row,used in decided:
+        if used&unstable:row.update(status='ambiguous',reason='source_changed_during_catalog')
+        result.append(row if keep_private else {key:value for key,value in row.items() if not key.startswith('_')})
+    return sorted(result,key=lambda row:row['native_id'])
+
+
+def decide_entries(entries,store,inventory_of):
+    """One dedupe pass; returns (row, homes whose inventory it consulted) pairs."""
+    used=set()
+    def inventory(home):return inventory_of(home,used)
     groups={}
     for row in entries:groups.setdefault(row['native_id'],[]).append(row)
     result=[]
     for identifier,rows in groups.items():
+        used.clear()
         superseded=set();lineage_valid=True
         for entry in rows:
             if not entry.get('_lineage'):continue
@@ -950,8 +974,8 @@ def dedupe_entries(entries,store,keep_private=False):
             row=max(archives,key=lambda a:(int(a['updated_at']),a['_capture_time'])).copy()
             if len(owners)>1:row.update(status='ambiguous',reason='duplicate_archive_owner')
         if not lineage_valid:row.update(status='ambiguous',reason='diverged_restore_origin')
-        result.append(row if keep_private else {key:value for key,value in row.items() if not key.startswith('_')})
-    return sorted(result,key=lambda row:row['native_id'])
+        result.append((row,set(used)))
+    return result
 
 
 def recorded_source(path, root):

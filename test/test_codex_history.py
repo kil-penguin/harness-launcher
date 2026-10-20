@@ -1403,6 +1403,47 @@ class CatalogCostTest(unittest.TestCase):
             history_module.catalog_value(self.args(state))
         self.assertEqual(len(calls), 2)
 
+    def signature_walks(self, home):
+        walks = []
+        real = history_module.inventory_signature
+        def wrapper(path, children):
+            if Path(path) == home:
+                walks.append(1)
+            return real(path, children)
+        return walks, mock.patch.object(history_module, "inventory_signature", wrapper)
+
+    def test_signature_is_walked_twice_per_home_however_many_rows(self):
+        state, home = self.multi_row_live_home_with_archive("signature-twice", 6)
+        walks, patch = self.signature_walks(home)
+        with patch:
+            result = history_module.catalog_value(self.args(state))
+        self.assertGreaterEqual(len([r for r in result["entries"] if r["snapshot_id"]]), 7)
+        self.assertEqual(len(walks), 2)
+
+    def test_change_between_first_and_end_signature_redoes_once_and_keeps_rows(self):
+        state, home = self.multi_row_live_home_with_archive("signature-redo-once")
+        baseline = history_module.catalog_value(self.args(state))
+        nested = next((home / "sessions").rglob("rollout-extra-*.jsonl"))
+        calls, patch = self.counted(home, lambda count: nested.write_text(nested.read_text() + "{}\n") if count == 1 else None)
+        with patch:
+            result = history_module.catalog_value(self.args(state))
+        self.assertEqual(len(calls), 2)
+        self.assertFalse([r for r in result["entries"] if r["reason"] == "source_changed_during_catalog"])
+        self.assertEqual([r["native_id"] for r in result["entries"]], [r["native_id"] for r in baseline["entries"]])
+        self.assertEqual(len(result["entries"]), len(baseline["entries"]))
+
+    def test_change_on_the_redo_too_holds_the_rows_that_used_the_home(self):
+        state, home = self.multi_row_live_home_with_archive("signature-redo-twice")
+        nested = next((home / "sessions").rglob("rollout-extra-*.jsonl"))
+        calls, patch = self.counted(home, lambda count: nested.write_text(nested.read_text() + "{}\n"))
+        with patch:
+            result = history_module.catalog_value(self.args(state))
+        self.assertEqual(len(calls), 2)
+        held = [r for r in result["entries"] if r["home"] == str(home)]
+        self.assertGreaterEqual(len(held), 4)
+        for row in held:
+            self.assertEqual((row["status"], row["reason"]), ("ambiguous", "source_changed_during_catalog"))
+
 
 if __name__ == "__main__":
     unittest.main()
