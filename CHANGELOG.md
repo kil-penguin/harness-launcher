@@ -2,6 +2,21 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## Unreleased
+
+- Add a usage-collection policy: only harnesses that opt in with
+  `HARNESS_AGENT_USAGE_COLLECT="1"` on an enrolled device stay visible to an
+  organization-managed collector. Other profiles disable Claude telemetry through
+  the launcher `--settings`, discard child-process OTLP signals, and publish
+  exclusion manifests in `~/.agent-usage/collection.d`; collecting profiles
+  inherit the user's Codex `[otel]` table and register isolated session roots.
+  The flag is read from the canonical source root (never an isolated clone);
+  reconcile evaluates every recorded session source root, leaves unevaluated
+  sessions untouched, sweeps only its own state home's manifests and runs under
+  a bounded cross-process lock. Codex launches with local observability point
+  Claude child processes at the loopback collector, and `checkup prompt-audit`
+  carries the policy in its own `--settings`.
+
 ## 0.66.0 — 2026-10-19
 
 - Default new native Codex launches to Auto, following Codex configuration and

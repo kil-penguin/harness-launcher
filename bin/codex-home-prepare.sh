@@ -114,6 +114,53 @@ else
   [[ "$observability_status" -eq 1 ]] || exit "$observability_status"
 fi
 
+# Company usage collection (harness_agent_usage_policy): a collecting profile
+# without local observability inherits the whitelisted [otel] table of the
+# user's ~/.codex/config.toml. The block (headers included) is never printed.
+# The flag comes from the canonical source root; an inherited
+# HARNESS_SOURCE_ROOT counts only when this harness is that session's root.
+COMPANY_OTEL_TOML=""
+if [[ "$HARNESS_OBSERVABILITY_ACTIVE" -eq 0 ]]; then
+  harness_agent_usage_policy "$HARNESS_DIR" "$(harness_agent_usage_session_hint "$HARNESS_DIR")" || true
+  if [[ "$HARNESS_AGENT_USAGE_ACTIVE" == 1 ]]; then
+    company_otel_python=""
+    if [[ "${HARNESS_AGENT_USAGE_TEST_MODE:-0}" != 1 || "${HARNESS_AGENT_USAGE_TEST_PYTHON_FAIL:-0}" != 1 ]]; then
+      company_otel_python="$(harness_python3_resolve 2>/dev/null)" || company_otel_python=""
+    fi
+    if [[ -z "$company_otel_python" ]]; then
+      echo "WARN: company OTel not inherited for Codex: python 3.11+ (tomllib) unavailable" >&2
+    else
+      company_otel_status=0
+      COMPANY_OTEL_TOML="$("$company_otel_python" -I "$SCRIPT_DIR/harness_agent_usage.py" codex-otel "$HOME/.codex/config.toml" 2>/dev/null)" || company_otel_status=$?
+      case "$company_otel_status" in
+        0) ;;
+        4) COMPANY_OTEL_TOML=""; echo "WARN: company OTel not inherited for Codex: ~/.codex/config.toml is missing or has no [otel] table" >&2 ;;
+        *) COMPANY_OTEL_TOML=""; echo "WARN: company OTel not inherited for Codex: ~/.codex/config.toml [otel] could not be parsed" >&2 ;;
+      esac
+    fi
+  fi
+fi
+if [[ -n "$COMPANY_OTEL_TOML" ]]; then
+  export HARNESS_AGENT_USAGE_COMPANY_OTEL=1
+else
+  unset HARNESS_AGENT_USAGE_COMPANY_OTEL
+fi
+
+# Fast-path guard: does the existing generated [otel] block still equal what
+# this launch would write? Contents are compared by hash, never printed.
+otel_block_sha() { awk '/^\[otel\]$/{f=1;print;next} /^\[/{f=0} f' "$1" 2>/dev/null | shasum -a 256 | awk '{print $1}'; }
+codex_otel_state_current() {
+  local config="$CODEX_HOME/config.toml" present=0
+  [[ -f "$config" ]] && grep -q '^\[otel\]$' "$config" && present=1
+  if [[ "$HARNESS_OBSERVABILITY_ACTIVE" -eq 1 ]]; then
+    [[ "$present" -eq 1 ]]
+  elif [[ -n "$COMPANY_OTEL_TOML" ]]; then
+    [[ "$present" -eq 1 && "$(otel_block_sha "$config")" == "$(printf '%s\n\n' "$COMPANY_OTEL_TOML" | shasum -a 256 | awk '{print $1}')" ]]
+  else
+    [[ "$present" -eq 0 ]]
+  fi
+}
+
 # Serialize the complete mutation of one generated Codex home. The lock file
 # itself requires the generated directory to exist, but no launcher-managed
 # surface is changed until the kernel advisory lock has been acquired. Keeping
@@ -252,9 +299,7 @@ if [[ -f "$SURFACE_MANIFEST" ]]; then
       "$CODEX_BUNDLED_MARKETPLACE_SOURCE" \
       "$CODEX_CONTEXT_WINDOW" \
       "$CODEX_AUTO_COMPACT_TOKEN_LIMIT" 2>/dev/null)"; then
-    existing_observability=0
-    [[ -f "$CODEX_HOME/config.toml" ]] && grep -q '^\[otel\]$' "$CODEX_HOME/config.toml" && existing_observability=1
-    if [[ "$existing_observability" -eq "$HARNESS_OBSERVABILITY_ACTIVE" ]]; then
+    if codex_otel_state_current; then
       repair_auth_link_no_clobber
       inherit_native_codex_plugins
       exit 0
@@ -934,6 +979,8 @@ trace_exporter = { otlp-http = { endpoint = "$HARNESS_OTLP_HTTP_ENDPOINT/v1/trac
 metrics_exporter = { otlp-http = { endpoint = "$HARNESS_OTLP_HTTP_ENDPOINT/v1/metrics", protocol = "binary", headers = {} } }
 
 TOML
+elif [[ -n "$COMPANY_OTEL_TOML" ]]; then
+  printf '%s\n\n' "$COMPANY_OTEL_TOML" >> "$tmp_config"
 fi
 
 codex_apps_allowlist="${HARNESS_CODEX_APPS_ALLOWLIST:-}"

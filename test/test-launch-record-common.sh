@@ -77,8 +77,10 @@ s="$(HARNESS_SESSION_ROOT=/s HARNESS_SESSION_ID=0D5D1F3E-0000-4000-8000-00000000
 case "$(hook_of "$s")" in *"--isolated 1"*"--harness-session-id 0D5D1F3E-0000-4000-8000-0000000000C2") ;; *) fail "isolated hook: $(hook_of "$s")" ;; esac
 s="$(HARNESS_SESSION_ROOT=/s HARNESS_SESSION_ID='x;id' harness_claude_launch_settings "$ROOT/bin" /r false plan "")"
 case "$(hook_of "$s")" in *--harness-session-id*) fail 'a non-UUID session id must not be passed' ;; esac
-[ -z "$(harness_claude_launch_settings "$ROOT/bin" "$(printf '/r\033x')" false plan "")" ] || fail 'a control character must drop the hook'
-[ -z "$(harness_claude_launch_settings "$TMP/no-bin" /r false plan "")" ] || fail 'no hook script must print nothing'
+# A root without the usage opt-in also gets the telemetry-off env block, so the
+# check is that the hook itself is dropped, not that nothing is printed.
+case "$(harness_claude_launch_settings "$ROOT/bin" "$(printf '/r\033x')" false plan "")" in *hooks*|*SessionStart*) fail 'a control character must drop the hook' ;; esac
+case "$(harness_claude_launch_settings "$TMP/no-bin" /r false plan "")" in *hooks*|*SessionStart*) fail 'no hook script must print no hook' ;; esac
 # The grant binds the canonical source, while opt-in follows the session snapshot.
 mkdir -p "$TMP/session/config"
 printf '{"enabled":true}\n' > "$TMP/session/config/ssot-session-hooks.json"

@@ -21,6 +21,15 @@ write_heartbeat() {
   date -u +%Y-%m-%dT%H:%M:%SZ > "$tmp"
   mv -f "$tmp" "$dir/heartbeat"
 }
+# agent_usage_sync <session-id> <source-root>: refresh this session's company
+# usage-collection manifest (created, retired). Fail-open and silent on stdout:
+# create's stdout is a key=value contract.
+agent_usage_sync() {
+  local bin
+  bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [[ -f "$bin/harness-common.sh" ]] || return 0
+  ( source "$bin/harness-common.sh"; harness_agent_usage_sync_session "$bin" "$1" "$2" ) >/dev/null || true
+}
 field() { sed -n "s/^$2=//p" "$1" | head -n 1; }
 # Broker git on a session root: nothing named by the session's own config may
 # run (fsmonitor, hooks, external diff, submodule recursion).
@@ -268,6 +277,7 @@ create() {
   : > "$dir/runtime.lock"
   write_journal "$dir" OPEN ""
   write_heartbeat "$dir"
+  agent_usage_sync "$id" "$source"
   printf 'HARNESS_SESSION_ID=%s\nHARNESS_SOURCE_ROOT=%s\nHARNESS_SESSION_ROOT=%s\nHARNESS_RUN_DIR=%s\n' "$id" "$source" "$root" "$root"
 }
 valid_id() { [[ "$1" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; }
@@ -476,6 +486,7 @@ gc_unlocked() {
     IFS= read -r source < "$dir/source-root"
     archive_verified "$state" "$tomb_id" "$source" || continue
     rm -rf -- "$tomb"
+    agent_usage_sync "$tomb_id" "$source"
   done
   for tomb in "$worktrees"/.archiving-*; do
     [[ -d "$tomb" && ! -L "$tomb" ]] || continue
@@ -522,6 +533,7 @@ gc_unlocked() {
         [[ -z "${HARNESS_HISTORY_SOURCE_ROOT:-}" || "$source" == "$HARNESS_HISTORY_SOURCE_ROOT" ]] || exit 21
         tomb="$worktrees/.archiving-$id-${BASHPID:-$$}"
         retire_native_root "$root" "$tomb" "$dir" "$source" "$id" || exit 21
+        agent_usage_sync "$id" "$source"
         exit 0
       fi
       [[ "$presence" == absent ]] || exit 21
@@ -530,6 +542,7 @@ gc_unlocked() {
       [[ ! -e "$tomb" && ! -L "$tomb" ]] || exit 18
       mv "$root" "$tomb" || exit 19
       rm -rf -- "$tomb" || exit 20
+      agent_usage_sync "$id" "$source"
     ) && retired=$((retired + 1)) || retained=$((retained + 1))
   done
   printf 'harness-session gc: scanned=%s retired=%s retained=%s elapsed_seconds=%s\n' "$scanned" "$retired" "$retained" "$(( $(date -u +%s) - started ))" >&2
