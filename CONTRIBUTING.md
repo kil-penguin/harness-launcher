@@ -66,9 +66,9 @@ Run every test through its declared interpreter:
 ./test/run-all.sh
 ```
 
-The no-argument command remains the full ordered suite. The CI partition keeps
-all 124 existing suite invocations in their original relative order and appends
-one partition regression (125 total); existing interpreter, source admission,
+The no-argument command remains the full ordered suite. The CI partition uses
+the same ordered inventory, including the session-creation lease and recovery
+regressions; existing interpreter, source admission,
 conditional-skip and first-error behavior are unchanged.
 
 CI uses the same runner in four fixed groups: `headless`, `shell`,

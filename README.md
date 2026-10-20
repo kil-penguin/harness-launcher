@@ -150,6 +150,11 @@ Registered commands are workspace-aware. If the current directory resolves insid
 
 ### Isolated sessions
 
+Concurrent creation uses a per-session lease. Preparation does not admit a session
+until its normal journal and any dispatcher binding are ready; interrupted or
+uncertain publication is recovered with verified readback. See
+[session creation and recovery](docs/session-creation.md).
+
 Root sessions can opt into a disposable detached Git repository with `--isolated`, or by
 setting `HARNESS_SESSION_ISOLATION=1`. The launcher exports
 `HARNESS_SOURCE_ROOT`, `HARNESS_SESSION_ROOT`, and `HARNESS_RUN_DIR`; a root

@@ -69,13 +69,13 @@ EXPECT
 argv_has() { grep -qxF -- "ARG=$2" "$1"; }
 arg_after() { awk -v k="ARG=$2" 'f{print; exit} $0==k{f=1}' "$1"; }
 session_count() { find "$STATE/sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '; }
-UUID_RE='^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$'
+UUID_RE='^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
 
 # --- fresh launch: --name kept, lowercase --session-id appended -------------
 run_tty "$TMP/fresh.log" base || fail 'fresh interactive isolated launch failed'
 root="$(sed -n 's/^SESSION=//p' "$TMP/fresh.log")"
 ID="$(basename "$root")"
-[[ "$ID" =~ $UUID_RE ]] || fail "session dir is not an uppercase UUID: $ID"
+[[ "$ID" =~ $UUID_RE ]] || fail "session dir is not a UUID: $ID"
 argv_has "$TMP/fresh.log" --name || fail 'fresh launch lost the bootstrap --name'
 lower="${(L)ID}"
 [[ "$(arg_after "$TMP/fresh.log" --session-id)" == "ARG=$lower" ]] || fail 'fresh launch must carry --session-id <lowercase id>'

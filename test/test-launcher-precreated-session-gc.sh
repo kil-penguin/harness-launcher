@@ -14,7 +14,7 @@ git -C "$HARNESS" config user.name test
 print -r -- 'HARNESS_NAME="test"' 'HARNESS_PREFIX="test"' > "$HARNESS/config/launcher.env"
 git -C "$HARNESS" add -A && git -C "$HARNESS" commit -qm initial
 
-cp "$ROOT/bin/aliases.zsh" "$ROOT/bin/harness-common.sh" "$ROOT/bin/session-isolation.sh" "$BIN/"
+cp "$ROOT/bin/aliases.zsh" "$ROOT/bin/harness-common.sh" "$ROOT/bin/session-isolation.sh" "$ROOT/bin/harness_session_creation.py" "$BIN/"
 cp "$ROOT/bin/launcher.sh" "$ROOT/bin/harness-workspace-choice" "$BIN/"
 chmod +x "$BIN/session-isolation.sh" "$BIN/harness-workspace-choice"
 mv "$BIN/session-isolation.sh" "$BIN/session-isolation-real.sh"

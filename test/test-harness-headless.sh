@@ -29,6 +29,14 @@ FIXTURE_PYTHON="$(source "$ROOT/bin/harness-common.sh"; harness_python3_resolve)
   exit 1
 }
 ln -s "$FIXTURE_PYTHON" "$STUB/python3"
+# /usr/bin/git can enter xcrun and the host-selected Xcode application, outside
+# the verifier's existing toolchain boundary. Bind the installed CLT executable
+# in this owned fixture; add no sandbox permission or PATH directory.
+FIXTURE_GIT="$(command -v git)"
+if [[ -x /Library/Developer/CommandLineTools/usr/bin/git ]]; then
+  FIXTURE_GIT=/Library/Developer/CommandLineTools/usr/bin/git
+fi
+ln -s "$FIXTURE_GIT" "$STUB/git"
 
 git init -q --bare -b main "$REMOTE"
 git -C "$SOURCE" init -q -b main
@@ -592,7 +600,7 @@ if [[ -n "\$pattern" && " \$* " == *"\$pattern"* ]]; then echo "injected git fai
 # System config is host data outside this hermetic fixture.
 # Preserve the verifier's generated GIT_CONFIG_GLOBAL identity.
 export GIT_CONFIG_NOSYSTEM=1
-exec "$(command -v git)" "\$@"
+exec "$FIXTURE_GIT" "\$@"
 EOF
 chmod +x "$TMP/failgit/git"
 echo variants > "$TMP/mode"
@@ -1813,7 +1821,7 @@ for _ in $(seq 1 200); do grep -q '^FAKE-CODEX-SETSID' "$RESULT.log" 2>/dev/null
 grandchild="$(sed -n 's/^FAKE-CODEX-GRANDCHILD //p' "$RESULT.log")"
 setsid_child="$(sed -n 's/^FAKE-CODEX-SETSID //p' "$RESULT.log")"
 [[ -n "$grandchild" && -n "$setsid_child" ]] || fail 'codex hang run did not start'
-term_sid="$(sed -n 's/^harness-launcher: isolated session \([0-9A-F-]*\);.*/\1/p' "$RESULT.log")"
+term_sid="$(sed -n 's/^harness-launcher: isolated session \([0-9A-Fa-f-]*\);.*/\1/p' "$RESULT.log")"
 python3 - "$STATE/sessions/$term_sid/runtime.lock" <<'PY' || fail 'the session lease must be held while codex runs'
 import fcntl, sys
 with open(sys.argv[1], 'r+') as f:

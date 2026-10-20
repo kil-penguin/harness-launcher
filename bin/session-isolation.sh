@@ -229,26 +229,44 @@ headless_local_files() {
   done
 }
 create() {
-  local source="$1" local_only="${2:-0}" root state id base sha dir local_file has_origin=0
+  local source="$1" local_only="${2:-0}" reserved_id="${3:-}" root state id base sha dir local_file has_origin=0 helper
   source="$(cd "$source" && pwd -P)"
   git -C "$source" rev-parse --is-inside-work-tree >/dev/null
-  state="$(state_home)"; mkdir -p "$state/sessions" "$state/worktrees"
-  if git -C "$source" remote get-url origin >/dev/null 2>&1; then
-    has_origin=1
-    [[ "$local_only" == 1 ]] || git -C "$source" fetch -q origin main:refs/remotes/origin/main
+  state="$(state_home)"
+  helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/harness_session_creation.py"
+  if [[ -n "$reserved_id" ]]; then
+    valid_id "$reserved_id" || { echo 'harness-session: invalid reserved UUID' >&2; return 2; }
+    dir="$state/sessions/$reserved_id"; root="$state/worktrees/$reserved_id"
+    [[ -n "${HARNESS_CREATION_LEASE_FD:-}" && -f "$helper" && ! -L "$helper" ]] || {
+      echo 'harness-session: reserved create lacks its creation lease' >&2; return 2;
+    }
+    python3 -I "$helper" verify-reserved --record "$dir" --source "$source" --engine "$0" \
+      --lease-fd "$HARNESS_CREATION_LEASE_FD" || return 2
+    [[ -d "$dir" && ! -L "$dir" && -d "$state/worktrees" && ! -L "$state/worktrees" \
+        && -d "$root" && ! -L "$root" && -z "$(find "$root" -mindepth 1 -maxdepth 1 -print -quit)" ]] || {
+      echo 'harness-session: reserved paths are no longer owned' >&2; return 2;
+    }
+    for local_file in source-root session-root base-sha root-inode lease-v1 runtime.lock journal; do
+      [[ ! -e "$dir/$local_file" && ! -L "$dir/$local_file" ]] || {
+        echo 'harness-session: reserved record is no longer empty' >&2; return 2;
+      }
+    done
+    id="$reserved_id"
+  else
+    mkdir -p "$state/sessions" "$state/worktrees"
   fi
-  if [[ "$local_only" == 1 && "$has_origin" == 1 ]]; then
-    base="$(git -C "$source" rev-parse --verify -q refs/remotes/origin/main)" || {
+  [[ -f "$helper" && ! -L "$helper" ]] || { echo 'harness-session: creation helper unavailable' >&2; return 2; }
+  if [[ "$local_only" == 1 ]]; then
+    sha="$(python3 -I "$helper" source-base --source "$source" --local)" || {
       echo 'harness-session: offline restore requires a cached origin/main' >&2; return 2;
     }
-  elif [[ "$local_only" == 1 ]]; then
-    base="$(git -C "$source" rev-parse --verify -q refs/heads/main)" || return 2
   else
-    base="$(git -C "$source" rev-parse --verify -q origin/main 2>/dev/null || git -C "$source" rev-parse HEAD)"
+    sha="$(python3 -I "$helper" source-base --source "$source")" || return 2
   fi
-  sha="$(git -C "$source" rev-parse "$base^{commit}")"
-  id="$(new_id)"; dir="$state/sessions/$id"; root="$state/worktrees/$id"
-  mkdir -p "$dir"
+  if [[ -z "$reserved_id" ]]; then
+    id="$(new_id)"; dir="$state/sessions/$id"; root="$state/worktrees/$id"
+    mkdir -p "$dir"
+  fi
   local -a clone_flags=(-q --no-checkout)
   [[ "${HARNESS_HEADLESS:-0}" != 1 ]] || clone_flags+=(--no-hardlinks)
   git clone "${clone_flags[@]}" "$source" "$root"
@@ -256,7 +274,14 @@ create() {
   git -C "$root" checkout -q --detach "$sha"
   rm -rf "$root/config/.local"
   if [[ "${HARNESS_HEADLESS:-0}" == 1 ]]; then
-    headless_local_files "$source" "$root" || { rm -rf "$root" "$dir"; return 2; }
+    headless_local_files "$source" "$root" || {
+      # Reserved cleanup belongs to the lease/identity-checked parent. A fixed
+      # internal status preserves the public refusal outcome without raw stderr.
+      [[ -z "$reserved_id" ]] || return 78
+      rm -rf "$dir"
+      rm -rf "$root"
+      return 2
+    }
   else
     if [[ -d "$source/projects" ]]; then rm -rf "$root/projects"; ln -s "$source/projects" "$root/projects"; fi
     for local_file in .mcp.local.json mcp.local.json .claude/settings.local.json; do
@@ -292,8 +317,8 @@ create() {
   fi
   printf '1\n' > "$dir/lease-v1"
   : > "$dir/runtime.lock"
-  write_journal "$dir" OPEN ""
-  write_heartbeat "$dir"
+  [[ -n "$reserved_id" ]] || write_journal "$dir" OPEN ""
+  [[ -n "$reserved_id" ]] || write_heartbeat "$dir"
   agent_usage_sync "$id" "$source"
   printf 'HARNESS_SESSION_ID=%s\nHARNESS_SOURCE_ROOT=%s\nHARNESS_SESSION_ROOT=%s\nHARNESS_RUN_DIR=%s\n' "$id" "$source" "$root" "$root"
 }
@@ -1237,7 +1262,23 @@ discard_unlocked() {
   )
 }
 case "${1:-}" in
-  create) shift; if [[ "${1:-}" == --local ]]; then shift; [[ $# -eq 1 ]] || exit 2; create "$1" 1; else [[ $# -eq 1 ]] || exit 2; create "$1"; fi ;;
+  create)
+    shift
+    if [[ "${1:-}" == --reserved ]]; then
+      reserved_id="${2:-}"
+      shift 2
+      if [[ "${1:-}" == --local ]]; then shift; [[ $# -eq 1 ]] || exit 2; create "$1" 1 "$reserved_id"; else [[ $# -eq 1 ]] || exit 2; create "$1" 0 "$reserved_id"; fi
+    else
+      creation_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/harness_session_creation.py"
+      [[ -f "$creation_script" && ! -L "$creation_script" ]] || { echo 'harness-session: creation helper unavailable' >&2; exit 2; }
+      if [[ "${1:-}" == --local ]]; then
+        shift; [[ $# -eq 1 ]] || exit 2
+        exec python3 -I "$creation_script" legacy-create --engine "$0" --state "$(state_home)" --local "$1"
+      fi
+      [[ $# -eq 1 ]] || exit 2
+      exec python3 -I "$creation_script" legacy-create --engine "$0" --state "$(state_home)" "$1"
+    fi
+    ;;
   discard) shift; [[ $# -eq 1 ]] || exit 2; with_lock discard_unlocked "$1" ;;
   resolve-run-dir) shift; [[ $# -eq 3 ]] || exit 2; resolve_run_dir "$@" ;;
   resume) shift; [[ $# -eq 2 ]] || exit 2; resume_session "$1" "$2" ;;
