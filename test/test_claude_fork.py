@@ -362,4 +362,157 @@ print(p.receipt['native_id']); p.close()
         os.link(provider,newdir/'provider-sessions')
         invoke(); self.assertEqual(provider.read_bytes(),before)
 
+class ForkInheritanceTests(ClaudeForkTests):
+    """Top-level fork with a record bound to the verified origin owner inherits its launch settings."""
+
+    def setUp(self):
+        super().setUp()
+        self.path.write_text(json.dumps({'sessionId': NATIVE, 'cwd': str(self.root)}) + '\n' + json.dumps(
+            {'type': 'assistant', 'effort': 'high', 'message': {'model': 'claude-opus-4-8', 'usage': {'input_tokens': 10}}}) + '\n')
+        self.records = self.state / 'launch-records'
+        self.records.mkdir(mode=0o700)
+
+    def record_file(self, **changes):
+        fields = {'permission': 'bypassPermissions', 'source_root': str(self.source), 'isolated': '1',
+                  'harness_session_id': OWNER, 'context': '1m'}
+        fields.update(changes)
+        path = self.records / ('claude-' + NATIVE)
+        if path.is_symlink() or path.exists(): path.unlink()
+        path.write_text(''.join('%s=%s\n' % (k, v) for k, v in fields.items() if v is not None))
+        path.chmod(0o600)
+        return path
+
+    def prepare_as(self, top_level=True):
+        mod = self.module()
+        original = mod._context.launch_top_level
+        mod._context.launch_top_level = lambda *a, **k: (True, None) if top_level else (False, 'agent_ancestor')
+        self.addCleanup(setattr, mod._context, 'launch_top_level', original)
+        return mod, self.prepare()
+
+    ARGS = ['rich', 'resume', NATIVE, '--fork-session', '--', 'prompt']
+
+    def test_top_level_bound_record_supplies_permission_model_and_effort(self):
+        self.record_file()
+        mod, prepared = self.prepare_as()
+        self.assertEqual(prepared.inherited['permission'], 'bypassPermissions')
+        self.assertNotIn('inherited', prepared.receipt)
+        self.assertEqual(mod.rewrite(['resume', NATIVE, '--fork-session', '--', 'prompt'], prepared.receipt, prepared.inherited),
+                         ['--passthrough', '--resume', str(self.path), '--fork-session', '--permission-mode', 'bypassPermissions',
+                          '--model', 'claude-opus-4-8[1m]', '--effort', 'high', '--', 'prompt'])
+
+    def test_without_inherited_rewrite_is_unchanged(self):
+        self.record_file()
+        mod, prepared = self.prepare_as()
+        self.assertEqual(mod.rewrite(['resume', NATIVE, '--fork-session'], prepared.receipt),
+                         ['--passthrough', '--resume', str(self.path), '--fork-session', '--permission-mode', 'default'])
+        self.assertEqual(mod.rewrite(['resume', NATIVE, '--fork-session'], prepared.receipt, None)[-2:], ['--permission-mode', 'default'])
+
+    def test_not_top_level_is_default(self):
+        self.record_file()
+        mod, prepared = self.prepare_as(top_level=False)
+        self.assertIsNone(prepared.inherited)
+        self.assertEqual(mod.rewrite(['resume', NATIVE, '--fork-session'], prepared.receipt, prepared.inherited)[-2:], ['--permission-mode', 'default'])
+
+    def test_missing_record_is_default(self):
+        mod, prepared = self.prepare_as()
+        self.assertIsNone(prepared.inherited)
+
+    def test_binding_mismatches_are_default(self):
+        other = self.base / 'other'; other.mkdir()
+        for changes in ({'source_root': str(other)}, {'isolated': '0'}, {'harness_session_id': CHILD},
+                        {'harness_session_id': None}, {'isolated': None}, {'source_root': None}):
+            with self.subTest(changes=changes):
+                self.record_file(**changes)
+                mod, prepared = self.prepare_as()
+                self.assertIsNone(prepared.inherited)
+                prepared.close()
+
+    def test_unsafe_record_files_are_default(self):
+        path = self.record_file(); path.chmod(0o644)
+        mod, prepared = self.prepare_as(); self.assertIsNone(prepared.inherited); prepared.close()
+        path.chmod(0o600); os.link(path, self.base / 'link')
+        mod, prepared = self.prepare_as(); self.assertIsNone(prepared.inherited); prepared.close()
+        (self.base / 'link').unlink(); path.unlink()
+        real = self.base / 'real-record'; real.write_text(self.record_file().read_text()); real.chmod(0o600)
+        (self.records / ('claude-' + NATIVE)).unlink()
+        (self.records / ('claude-' + NATIVE)).symlink_to(real)
+        mod, prepared = self.prepare_as(); self.assertIsNone(prepared.inherited)
+
+    def test_owner_matches_case_insensitively_and_source_by_realpath(self):
+        link = self.base / 'source-link'; link.symlink_to(self.source, target_is_directory=True)
+        self.record_file(harness_session_id=OWNER.upper(), source_root=str(link))
+        mod, prepared = self.prepare_as()
+        self.assertEqual(prepared.inherited['permission'], 'bypassPermissions')
+
+    def test_record_swap_after_prepare_is_refused(self):
+        self.record_file()
+        mod, prepared = self.prepare_as()
+        self.record_file(permission='plan')
+        with self.assertRaises(ValueError): prepared.recheck()
+        self.assertEqual(prepared.fds, ())
+
+    def test_record_removed_or_appearing_after_prepare_is_refused(self):
+        path = self.record_file()
+        mod, prepared = self.prepare_as()
+        path.unlink()
+        with self.assertRaises(ValueError): prepared.recheck()
+        mod, prepared = self.prepare_as()
+        self.record_file()
+        with self.assertRaises(ValueError): prepared.recheck()
+
+    def test_unchanged_record_rechecks(self):
+        self.record_file()
+        mod, prepared = self.prepare_as()
+        prepared.recheck()
+
+    def test_explicit_flags_and_keywords_win(self):
+        self.record_file()
+        mod, prepared = self.prepare_as()
+        def rewritten(*args):
+            return mod.rewrite(list(args) + ['resume', NATIVE, '--fork-session'], prepared.receipt, prepared.inherited)
+        out = rewritten('--permission-mode', 'plan')
+        self.assertEqual(out.count('--permission-mode'), 1); self.assertEqual(out[out.index('--permission-mode') + 1], 'plan')
+        self.assertIn('--model', out)
+        for flag in ('bypass', 'acceptEdits', 'dontAsk'):
+            out = rewritten(flag)
+            self.assertNotIn('--permission-mode', out); self.assertIn('--model', out)
+        out = rewritten('--model', 'sonnet')
+        self.assertEqual(out.count('--model'), 1); self.assertEqual(out[out.index('--model') + 1], 'sonnet'); self.assertIn('--effort', out)
+        self.assertNotIn('claude-opus-4-8[1m]', out)
+        out = rewritten('--effort', 'low')
+        self.assertEqual(out.count('--effort'), 1); self.assertIn('--model', out)
+        out = rewritten('--effort=low'); self.assertNotIn('--effort', out); self.assertIn('--effort=low', out)
+        out = rewritten('--model=sonnet'); self.assertNotIn('--model', out); self.assertIn('--model=sonnet', out)
+        for word in ('opus', 'fast', 'base', 'rich', 'fable', 'plan'):
+            out = rewritten(word)
+            self.assertNotIn('--model', out); self.assertIn('--effort', out); self.assertIn('--permission-mode', out)
+        for word in ('low', 'medium', 'high', 'xhigh', 'max'):
+            out = rewritten(word)
+            self.assertNotIn('--effort', out); self.assertIn('--model', out)
+        out = rewritten('ultracode'); self.assertNotIn('--model', out); self.assertNotIn('--effort', out)
+
+    def test_flags_after_prompt_separator_are_prompt_text(self):
+        self.record_file()
+        mod, prepared = self.prepare_as()
+        out = mod.rewrite(['resume', NATIVE, '--fork-session', '--', '--model', 'x', '--effort', 'low'], prepared.receipt, prepared.inherited)
+        self.assertIn('claude-opus-4-8[1m]', out); self.assertIn('high', out)
+
+    def test_inherited_without_probe_data_still_gives_permission(self):
+        self.record_file(context=None)
+        self.path.write_text(json.dumps({'sessionId': NATIVE, 'cwd': str(self.root)}) + '\n')
+        mod, prepared = self.prepare_as()
+        out = mod.rewrite(['resume', NATIVE, '--fork-session'], prepared.receipt, prepared.inherited)
+        self.assertEqual(out, ['--passthrough', '--resume', str(self.path), '--fork-session', '--permission-mode', 'bypassPermissions'])
+
+    def test_context_suffix_not_duplicated(self):
+        self.record_file()
+        self.path.write_text(self.path.read_text().replace('"input_tokens": 10', '"input_tokens": 300000'))
+        mod, prepared = self.prepare_as()
+        out = mod.rewrite(['resume', NATIVE, '--fork-session'], prepared.receipt, prepared.inherited)
+        self.assertEqual(out[out.index('--model') + 1], 'claude-opus-4-8[1m]')
+
+
+for _name in [n for n in dir(ClaudeForkTests) if n.startswith('test_')]:
+    setattr(ForkInheritanceTests, _name, None)  # reuse the fixture only
+
 if __name__ == '__main__': unittest.main()

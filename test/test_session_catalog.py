@@ -259,5 +259,107 @@ class SessionCatalogTest(unittest.TestCase):
             self.assertIn({'code':'unsafe_native_restore','profile':'demo'},result['problems'])
 
 
+class ClaudeExactModeTest(unittest.TestCase):
+    NATIVE = '66666666-6666-4666-8666-666666666666'
+    OTHER = '77777777-7777-4777-8777-777777777777'
+
+    def setUp(self):
+        import harness_session_catalog as module
+        self.module = module
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name).resolve()
+        self.source, self.home = base / 'source', base / 'home'; self.source.mkdir()
+        self.projects = self.home / '.claude' / 'projects'
+        self.slug = self.projects / 'slug'; self.slug.mkdir(parents=True)
+
+    def write(self, path, native=None, cwd=None, text=None):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text if text is not None else json.dumps({'sessionId': native, 'cwd': cwd or str(self.source)}) + '\n')
+        return path
+
+    def records(self, native_id=None):
+        problems = []
+        items = self.module._claude_records('t', self.source, self.home, problems, {}, native_id=native_id)
+        return items, problems
+
+    def test_subagents_directory_is_pruned_and_not_counted_per_file(self):
+        self.write(self.slug / f'{self.NATIVE}.jsonl', self.NATIVE)
+        sub = self.slug / self.NATIVE / 'subagents'; sub.mkdir(parents=True)
+        for index in range(30): (sub / f'agent-{index}.jsonl').write_text('not json\n')
+        wf = self.slug / self.NATIVE / 'workflows' / 'x'; wf.mkdir(parents=True)
+        with mock.patch.object(self.module, 'MAX_NODES', 10):
+            items, problems = self.records()
+        self.assertEqual([item['native_id'] for item in items], [self.NATIVE]); self.assertEqual(problems, [])
+
+    def test_symlinked_subagents_is_not_pruned_silently(self):
+        self.write(self.slug / f'{self.NATIVE}.jsonl', self.NATIVE)
+        outside = Path(self.tmp.name, 'outside'); outside.mkdir()
+        session = self.slug / self.NATIVE; session.mkdir()
+        (session / 'subagents').symlink_to(outside, target_is_directory=True)
+        items, problems = self.records()
+        self.assertTrue(any(p['code'] == 'unsafe_transcript_node' for p in problems))
+
+    def test_exact_mode_ignores_invalid_non_target_but_list_mode_reports_partial(self):
+        self.write(self.slug / f'{self.NATIVE}.jsonl', self.NATIVE)
+        self.write(self.slug / f'{self.OTHER}.jsonl', text='garbage\n')
+        wf = self.write(self.slug / self.NATIVE / 'workflows' / 'a' / 'journal.jsonl', text='garbage\n')
+        items, problems = self.records(self.NATIVE)
+        self.assertEqual([item['native_id'] for item in items], [self.NATIVE]); self.assertEqual(problems, [])
+        items, problems = self.records()
+        self.assertIn({'code': 'invalid_claude_transcript', 'profile': 't'}, problems)
+
+    def test_exact_mode_does_not_read_non_target_files(self):
+        self.write(self.slug / f'{self.NATIVE}.jsonl', self.NATIVE)
+        self.write(self.slug / f'{self.OTHER}.jsonl', self.OTHER)
+        with mock.patch.object(self.module, '_claude_meta', wraps=self.module._claude_meta) as meta:
+            self.records(self.NATIVE)
+        self.assertEqual([call.args[0].name for call in meta.call_args_list], [f'{self.NATIVE}.jsonl'])
+
+    def test_exact_mode_invalid_target_is_a_problem(self):
+        self.write(self.slug / f'{self.NATIVE}.jsonl', text='garbage\n')
+        items, problems = self.records(self.NATIVE)
+        self.assertEqual(items, []); self.assertTrue(problems)
+
+    def test_exact_mode_uppercase_name_and_native_id_argument(self):
+        self.write(self.slug / f'{self.NATIVE.upper()}.jsonl', self.NATIVE.upper())
+        items, problems = self.records(self.NATIVE)
+        self.assertEqual(len(items), 1); self.assertEqual(problems, [])
+
+    def test_exact_mode_duplicate_ids_in_two_slugs_both_returned(self):
+        self.write(self.slug / f'{self.NATIVE}.jsonl', self.NATIVE)
+        self.write(self.projects / 'slug2' / f'{self.NATIVE}.jsonl', self.NATIVE)
+        items, problems = self.records(self.NATIVE)
+        self.assertEqual(len(items), 2)
+
+    def test_exact_mode_symlinked_slug_or_projects_fails_closed(self):
+        outside = Path(self.tmp.name, 'outside'); self.write(outside / f'{self.NATIVE}.jsonl', self.NATIVE)
+        (self.projects / 'linked').symlink_to(outside, target_is_directory=True)
+        items, problems = self.records(self.NATIVE)
+        self.assertEqual(items, []); self.assertTrue(problems)
+        (self.projects / 'linked').unlink()
+        real = self.home / '.claude' / 'real'; self.projects.rename(real)
+        self.projects.symlink_to(real, target_is_directory=True)
+        items, problems = self.records(self.NATIVE)
+        self.assertEqual(items, []); self.assertTrue(problems)
+
+    def test_exact_mode_symlinked_target_file_fails_closed(self):
+        outside = self.write(Path(self.tmp.name, 'o.jsonl'), self.NATIVE)
+        (self.slug / f'{self.NATIVE}.jsonl').symlink_to(outside)
+        items, problems = self.records(self.NATIVE)
+        self.assertEqual(items, []); self.assertTrue(problems)
+
+    def test_exact_mode_budget_truncation_fails_closed(self):
+        for index in range(5): self.write(self.slug / f'{index:08d}-6666-4666-8666-666666666666.jsonl', text='x\n')
+        self.write(self.slug / f'{self.NATIVE}.jsonl', self.NATIVE)
+        with mock.patch.object(self.module, 'MAX_NODES', 3):
+            items, problems = self.records(self.NATIVE)
+        self.assertIn({'code': 'transcript_scan_budget', 'profile': 't'}, problems)
+
+    def test_exact_mode_does_not_descend_into_session_folders(self):
+        self.write(self.slug / self.NATIVE / 'nested' / f'{self.NATIVE}.jsonl', self.NATIVE)
+        items, problems = self.records(self.NATIVE)
+        self.assertEqual(items, []); self.assertEqual(problems, [])
+
+
 if __name__ == '__main__':
     unittest.main()

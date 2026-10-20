@@ -187,11 +187,24 @@ resume alone never authorizes a fork. `request()` recognizes direct Claude
 resume controls, option values and the `--` prompt boundary; `rewrite()` replaces
 only the selected UUID with the verified absolute transcript path and supplies
 `--permission-mode default` unless the caller explicitly selected permissions.
+`rewrite(args, receipt, inherited)` instead supplies the origin's recorded
+`--permission-mode`, plus `--model`/`--effort` read from the digest-verified
+transcript (`[1m]` when the record says `context=1m`), when `inherited` is given.
+`PreparedFork.inherited` is set only for a top-level launch
+(`harness_launch_context.launch_top_level()`) and an origin launch record
+(`launch-records/claude-<native id>`, read without following links) whose
+`source_root` is realpath-equal to the source, `isolated=1` and
+`harness_session_id` equals the verified origin owner (case-insensitive); it is
+never part of the receipt, and the record's digest joins the fork proof so
+`recheck()` refuses a swapped record. A nested (agent-run), unknown-context or
+unbound launch keeps `default`. An explicit `--permission-mode`/permission
+keyword, `--model`/model keyword (also suppresses `[1m]`) or
+`--effort`/effort keyword always wins over the inherited value.
 It keeps launcher presets before `--passthrough` and native arguments after it,
 so a bare fork starts Claude directly and native option values cannot become
 launcher keywords.
-The launch planner likewise requires a fresh caller permission for a Claude
-fork; the parent's saved permission is not inherited.
+The launch planner (Web UI path) still requires a fresh caller permission for a
+Claude fork; only the top-level terminal path above inherits the recorded one.
 
 `prepare(source_root, state_home, native_id, home=None)` acquires the native-ID
 lease before catalog discovery, then acquires the known parent's `runtime.lock`.
@@ -204,6 +217,13 @@ unsafe files, ambiguous ownership and unknown activity fail closed. A retired
 parent's disposable root may be absent if its durable ownership proof and global
 Claude transcript remain. Canonical history without provable inactivity remains
 on hold.
+
+Discovery is exact-id: only `projects/` and `projects/<slug>/` are listed and
+only `<native id>.jsonl` (case-insensitive) is read, so unrelated transcripts and
+`<slug>/<session>/` folders cannot make the fork incomplete; the target itself
+stays strictly validated and the node budget still fails closed. A
+`<native id>.jsonl` below a session folder is not a candidate. The full catalog
+list skips `<slug>/<session>/subagents/` directories (one node each).
 
 The returned object has `receipt`, inheritable `fds`, `recheck()` and idempotent
 `close()`. The entry must allocate a fresh owner from its current release, add
