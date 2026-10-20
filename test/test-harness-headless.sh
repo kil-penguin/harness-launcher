@@ -20,6 +20,16 @@ mkdir -p "$STUB" "$FAKE_HOME" "$PROFILES/profiles" "$TMP/out" "$SOURCE/config" "
 
 bash "$ROOT/test/lib/install-runtime-fixture.sh" "$ROOT" "$PREFIX"
 
+# The clean verifier PATH already includes STUB. Bind its python3 to the
+# launcher's supported runtime instead of macOS's xcrun-backed system shim.
+# This adds no PATH directory or sandbox permission and copies no executable.
+FIXTURE_PYTHON="$(source "$ROOT/bin/harness-common.sh"; harness_python3_resolve)"
+[[ "$FIXTURE_PYTHON" == /* && -x "$FIXTURE_PYTHON" ]] || {
+  echo 'FAIL: headless fixture requires an absolute supported Python executable' >&2
+  exit 1
+}
+ln -s "$FIXTURE_PYTHON" "$STUB/python3"
+
 git init -q --bare -b main "$REMOTE"
 git -C "$SOURCE" init -q -b main
 git -C "$SOURCE" config user.email test@example.invalid
@@ -577,6 +587,9 @@ cat > "$TMP/failgit/git" <<EOF
 #!/bin/bash
 pattern="\$(cat "$TMP/fail-git" 2>/dev/null)"
 if [[ -n "\$pattern" && " \$* " == *"\$pattern"* ]]; then echo "injected git failure: \$pattern" >&2; exit 128; fi
+# System config is host data outside this hermetic fixture.
+# Preserve the verifier's generated GIT_CONFIG_GLOBAL identity.
+export GIT_CONFIG_NOSYSTEM=1
 exec "$(command -v git)" "\$@"
 EOF
 chmod +x "$TMP/failgit/git"
@@ -1367,21 +1380,56 @@ with contextlib.redirect_stderr(err):
     fw.start()
     with open(os.path.join(up, 'delay'), 'w') as f:
         f.write('1')
+    # Hold the actual relay only after the production semaphore admits it.
+    # Eight started threads or a fixed sleep do not prove eight occupied slots.
+    entered = threading.Barrier(9, timeout=10)
+    release = threading.Event()
+    relay = h.ForwardHandler.relay
+    workers = []
+    def held_relay(self, forwarder):
+        if forwarder is fw and self.command == 'POST':
+            entered.wait()
+            if not release.wait(10):
+                raise AssertionError('forwarder fixture release timed out')
+        return relay(self, forwarder)
+    h.ForwardHandler.relay = held_relay
     try:
         results = []
         workers = [threading.Thread(target=lambda: results.append(req(fw, 'POST', '/v1/responses', body=ok_body)[0]))
                    for _ in range(8)]
         for w in workers:
             w.start()
-        time.sleep(0.7)
+        entered.wait()
         assert req(fw, 'GET', '/v1/models')[0] == 503
+        release.set()
         for w in workers:
             w.join()
         assert results == [200] * 8, results
         assert req(fw, 'GET', '/v1/models')[0] == 200
     finally:
-        os.unlink(os.path.join(up, 'delay'))
-        fw.close()
+        failed = sys.exc_info()[0] is not None
+        cleanup_error = None
+        release.set()
+        entered.abort()
+        deadline = time.monotonic() + 10
+        for w in workers:
+            if w.ident is not None:
+                try:
+                    w.join(max(0, deadline - time.monotonic()))
+                except BaseException as exc:
+                    if cleanup_error is None:
+                        cleanup_error = exc
+        h.ForwardHandler.relay = relay
+        for cleanup in (lambda: os.unlink(os.path.join(up, 'delay')), fw.close):
+            try:
+                cleanup()
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+        if not failed:
+            if cleanup_error is not None:
+                raise cleanup_error
+            assert not any(w.is_alive() for w in workers), 'forwarder fixture workers did not settle'
     # An idle client is dropped after the handler timeout.
     h.ForwardHandler.timeout = 1
     fw = h.Forwarder(up_port, key, 'stub-model', 5)

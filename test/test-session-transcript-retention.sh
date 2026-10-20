@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d /private/tmp/harness-transcript-test.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home" HARNESS_SESSION_STATE_HOME="$TMP/state" HARNESS_SESSION_RETENTION_SECONDS=0
 mkdir -p "$HOME" "$TMP/source"; chmod 700 "$HOME"
+# Resolve only this owned rejecting fake; Native proof must still fail closed.
+cat > "$TMP/native-unavailable" <<'SH'
+#!/bin/sh
+: > "$0.called"
+exit 1
+SH
+chmod 700 "$TMP/native-unavailable"
+export HARNESS_CODEX_BIN="$TMP/native-unavailable"
 git -C "$TMP/source" init -q -b main
 printf '.harness/\n' > "$TMP/source/.gitignore"
 git -C "$TMP/source" add .gitignore

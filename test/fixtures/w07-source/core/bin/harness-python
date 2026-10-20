@@ -1,0 +1,97 @@
+#!/bin/bash
+set -eo pipefail
+
+required_modules=()
+
+usage_error() {
+  printf 'usage: harness-python [--require MODULE]... -- COMMAND [ARG...]\n' >&2
+  exit 64
+}
+
+normalize_candidate() {
+  local candidate="$1" directory
+  directory="$(cd -P "$(dirname "$candidate")" && pwd)"
+  printf '%s/%s\n' "$directory" "$(basename "$candidate")"
+}
+
+add_candidate() {
+  local candidate="$1" normalized existing
+  [[ -n "$candidate" && -x "$candidate" ]] || return 0
+  normalized="$(normalize_candidate "$candidate")"
+  for existing in "${candidates[@]}"; do
+    [[ "$existing" == "$normalized" ]] && return 0
+  done
+  candidates+=("$normalized")
+}
+
+exec_candidate_if_valid() {
+  local candidate="$1"
+  shift
+  [[ -n "$candidate" && -x "$candidate" ]] || return 1
+  exec "$(normalize_candidate "$candidate")" "$@"
+}
+
+while [[ $# -gt 0 && "$1" != "--" ]]; do
+  [[ "$1" == "--require" && $# -ge 2 ]] || usage_error
+  [[ "$2" =~ ^[A-Za-z_][A-Za-z0-9_.]*$ ]] || usage_error
+  required_modules+=("$2")
+  shift 2
+done
+
+[[ "${1:-}" == "--" && $# -ge 2 ]] || usage_error
+shift
+
+if [[ ${#required_modules[@]} -eq 0 ]]; then
+  if [[ -n "${HARNESS_PYTHON:-}" ]]; then
+    if [[ ! -x "$HARNESS_PYTHON" ]]; then
+      printf 'harness-python: HARNESS_PYTHON is not executable: %s\n' "$HARNESS_PYTHON" >&2
+      exit 69
+    fi
+    exec_candidate_if_valid "$HARNESS_PYTHON" "$@"
+  fi
+  if exec_candidate_if_valid "$(mise which python3 2>/dev/null || true)" "$@"; then :; fi
+  if exec_candidate_if_valid "$(command -v python3 2>/dev/null || true)" "$@"; then :; fi
+  if exec_candidate_if_valid "$(command -v python 2>/dev/null || true)" "$@"; then :; fi
+  if exec_candidate_if_valid "/usr/bin/python3" "$@"; then :; fi
+fi
+
+candidates=()
+if [[ -n "${HARNESS_PYTHON:-}" ]]; then
+  if [[ ! -x "$HARNESS_PYTHON" ]]; then
+    printf 'harness-python: HARNESS_PYTHON is not executable: %s\n' "$HARNESS_PYTHON" >&2
+    exit 69
+  fi
+  add_candidate "$HARNESS_PYTHON"
+else
+  mise_candidate="$(mise which python3 2>/dev/null || true)"
+  add_candidate "$mise_candidate"
+  add_candidate "$(command -v python3 2>/dev/null || true)"
+  add_candidate "$(command -v python 2>/dev/null || true)"
+  # Final fallback: the well-known system interpreter. A mise shim (or any
+  # other PATH entry) can shadow python3/python before this point, making
+  # the system interpreter otherwise unreachable even when it is the only
+  # capable candidate on the machine. add_candidate already skips this if
+  # the path does not exist, so machines without it are unaffected.
+  add_candidate "/usr/bin/python3"
+fi
+
+if [[ ${#required_modules[@]} -eq 0 && ${#candidates[@]} -gt 0 ]]; then
+  exec "${candidates[0]}" "$@"
+fi
+
+for candidate in "${candidates[@]}"; do
+  if "$candidate" -c 'import importlib,sys; [importlib.import_module(x) for x in sys.argv[1:]]' \
+    "${required_modules[@]}"; then
+    exec "$candidate" "$@"
+  fi
+done
+
+printf 'harness-python: no capable interpreter found' >&2
+if [[ ${#required_modules[@]} -gt 0 ]]; then
+  printf ' for modules: %s' "$(IFS=,; printf '%s' "${required_modules[*]}")" >&2
+fi
+printf '\n' >&2
+for candidate in "${candidates[@]}"; do
+  printf 'harness-python: candidate: %s\n' "$candidate" >&2
+done
+exit 69

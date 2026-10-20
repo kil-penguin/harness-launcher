@@ -1,0 +1,10 @@
+settings:
+  model: synthetic-test-no-provider
+  includeGitInstructions: false
+  env:
+  attribution:
+hooks:
+  omp_required_contract: w07.required-resolver-consumer.v1
+  omp_upstream_base_version: "18.11.3"
+  omp_upstream_base_revision: 96894a6147d8cc64b7e00ad3a7d7178fd93b9531
+  entries:

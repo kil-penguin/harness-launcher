@@ -3,6 +3,10 @@
 # metadata code. No installed native CLI, real registry or credential home.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Admit only the pinned synthetic default or an explicitly equal owned source.
+HARNESS_TEST_OMP_SOURCE="$(python3 -I -S -B "$ROOT/test/omp-fixture-source.py")"
+export HARNESS_TEST_OMP_SOURCE
 python3 -I -S -B - "$ROOT" "$@" <<'PYTEST'
 import copy, fcntl, hashlib, importlib.util, json, os, shlex, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
@@ -310,7 +314,7 @@ _harness_launcher_isolated_finish() {
 shift
 _harness_launcher_run "$@"
 '''
-        env={'HOME':str(self.home),'PATH':str(self.tools)+':/usr/bin:/bin','LC_ALL':'C','TERM':'dumb',
+        env={'HOME':str(self.home),'PATH':self.preparation_path,'LC_ALL':'C','TERM':'dumb',
              'HARNESS_SESSION_STATE_HOME':str(self.state),'FIXTURE_PYTHON':sys.executable,
              'FIXTURE_EVENTS':str(self.events),'HARNESS_CLAUDE_PLUGIN_MIRROR':'0',
              'HARNESS_POST_EDIT_CODEX_SYNC':'0','HARNESS_POST_COMMIT_CODEX_SYNC':'0','TMPDIR':str(self.base)}
@@ -325,6 +329,13 @@ _harness_launcher_run "$@"
 
     def public_fixture(self, native_exit=0):
         self.tools=self.base/'tools';self.tools.mkdir();self.events=self.base/'events'
+        # Match the real bridge's system-first resolution, then admit only the
+        # selected real jq's physical directory from the normal test runner.
+        jq=shutil.which('jq',path='/usr/bin:/bin') or shutil.which('jq')
+        self.assertIsNotNone(jq,'the OMP continuation fixture requires real jq')
+        jq_parent=str(Path(jq).resolve(strict=True).parent)
+        self.preparation_path=':'.join(dict.fromkeys(
+            [str(self.tools),jq_parent,'/usr/bin','/bin']))
         for name in ('omp','claude','codex','kiro-cli','kiro'):
             tool=self.tools/name;tool.write_text('#!/bin/sh\nexit 97\n');tool.chmod(0o700)
         # Prevent even an unexpected generic branch from entering installed
@@ -362,6 +373,29 @@ raise SystemExit(EXIT_CODE)
         self.binary.chmod(0o555)
         marker=json.loads((self.ns/'.owner.json').read_bytes());marker['asset_sha256']=digest(self.binary)
         put(self.ns/'.owner.json',marker)
+        # Mandatory paired W07 cascade: this normal alias fixture now needs a
+        # source-equal structural kernel and an explicitly fake amended release.
+        kernel=Path(os.environ['HARNESS_TEST_OMP_SOURCE'])
+        self.release={'version':'18.11.3-kh.w07.1','source_revision':'1'*40,
+            'contract_id':'w07.required-resolver-consumer.v1','upstream_base_version':'18.11.3',
+            'upstream_base_revision':'96894a6147d8cc64b7e00ad3a7d7178fd93b9531',
+            'source_patch_sha256':'2'*64,'build_provenance_sha256':'3'*64}
+        def source_file(name,body):
+            path=self.profile/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body);path.chmod(0o600)
+        for name in ('runtime-contract.yaml','budgets.yaml','claude-md.yaml'):
+            body=(kernel/'.claude/source'/name).read_text()
+            if name=='runtime-contract.yaml':
+                body='\n'.join(line for line in body.splitlines() if 'shared_contract_release:' not in line)+'\n'
+            source_file('.claude/source/'+name,body)
+        for kind in ('agents','commands','skills'):
+            source_file('.claude/source/'+kind+'.yaml',kind+':\n  source: .claude/'+kind+'\n')
+        source_file('.claude/source/settings.yaml',
+            (kernel/'.claude/source/settings.yaml').read_text().split('\nhooks:',1)[0]+
+            '\nhooks:\n  omp_required_contract: w07.required-resolver-consumer.v1\n  omp_upstream_base_version: "18.11.3"\n'
+            '  omp_upstream_base_revision: 96894a6147d8cc64b7e00ad3a7d7178fd93b9531\n  entries:\n')
+        for name in ('core/scripts/harness_compile.py','core/scripts/omp_required_extension.ts'):
+            source_file(name,(kernel/name).read_text())
+        (self.profile/'.claude/rules').mkdir()
         self.kernel()
         (self.snapshot/'bin').chmod(0o500);self.snapshot.chmod(0o500)
 
@@ -370,13 +404,16 @@ raise SystemExit(EXIT_CODE)
         prompt='literal --resume claude "quoted"\nline two'
         self.public_shell(['--session-new','--print','--',prompt],0)
         calls=[json.loads(x) for x in self.calls.read_text().splitlines()]
-        self.assertEqual(len(calls),1);self.assertEqual(calls[0]['argv'],['--print','--session-dir',str(self.sessions),'--',prompt])
+        bundle=next((self.profile/'.harness/omp').iterdir())
+        required=['--append-system-prompt='+str(bundle/'policy.md'),'--no-extensions',
+                  '--extension='+str(bundle/'required-extension.ts'),'--harness-required-bundle='+str(bundle/'selection.json')]
+        self.assertEqual(len(calls),1);self.assertEqual(calls[0]['argv'],['--print',*required,'--session-dir',str(self.sessions),'--',prompt])
         self.assertEqual(calls[0]['cwd'],str(self.work));self.assertEqual(calls[0]['held'],[True,True])
         self.assertEqual(self.events.read_text(),'finish\n')
         self.public_shell(['--session-resume',self.h,'--print','--',prompt],0)
         calls=[json.loads(x) for x in self.calls.read_text().splitlines()]
         native=str(self.sessions/'fixture_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl')
-        self.assertEqual(calls[1]['argv'],['--print','--session-dir',str(self.sessions),'--resume',native,'--',prompt])
+        self.assertEqual(calls[1]['argv'],['--print',*required,'--session-dir',str(self.sessions),'--resume',native,'--',prompt])
         self.assertEqual(calls[1]['cwd'],str(self.work));self.assertEqual(calls[1]['held'],[True,True])
         self.assertEqual(self.events.read_text(),'finish\n')
         expected_env={'HOME':str(self.ns/'home'),'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C',

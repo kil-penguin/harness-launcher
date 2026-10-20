@@ -267,8 +267,55 @@ Missing/retired original C or metadata is a refusal, not permission to recreate
 or retain a workspace indefinitely. This is ordinary native execution with its
 usual history/auth/cache/provider effects, not sandbox, pre-provider live-manager
 identity, cross-host restore or full compatibility proof. Run the disposable
-fake-only checks with `bash test/test-omp-continuation.sh`; paired kernel tests
+fake-only checks with `bash test/test-omp-continuation.sh`; its default input is
+the pinned synthetic test fixture. An explicit paired fixture uses the same
+test-only admission ([fixture contract](../README.md#omp-test-source-fixture)); paired kernel tests
 must additionally cover the real Entry/dispatcher/bound-runtime composition.
+
+### Required OMP preparation and native consumption
+
+For enrolled normal sessions, preparation runs inside the original workspace and
+namespace leases after current validation, including continuation RESOLVE. It
+selects registered source/profile, actual B/N/cwd and stable current provenance;
+the compiler alone emits immutable `.harness/omp/<selection-sha>/` assets. The
+structural API returns a non-ready prepared expectation and preserves argv value
+and terminator boundaries. Only the launcher inserts one reserved manifest
+locator. The original environment remains exactly13 fields. Continuation keeps
+its owned session-dir/resume flags, original literal prompt and terminal handling;
+its strict release validator shares the projection's amended-release schema.
+
+Schema2 binds contract `w07.required-resolver-consumer.v1`, exact amended version
+`18.11.3-kh.w07.1`, reviewed native source revision/patch/build provenance and actual
+binary SHA separately from upstream base18.11.3/rev96894. These metadata are part
+of the existing trusted publisher's selected binary release, not self-reported
+capabilities or new authority. No stock fallback or config repair is performed.
+The private `validate-required-prepared(source, consumer, workspace, B, N,
+bundle_manifest)` helper verb re-derives canonical expectations under real current
+selection and checks existing assets without writing or running native. Native
+must verify the managed launcher/current/helper/interpreter closure before it
+invokes that helper; a manifest-named executable or locator is not trusted by itself.
+
+Actual inventory admission belongs to the native producer: original resolver,
+full settings/filter/collision semantics, exact tuple multiset and actual raw byte
+readset. That admitted array and each element must reach the existing production
+consumer unchanged. The schema2 bridge supplies no skillPaths callback producer.
+It checks native read-only consumed status/selection/manifest/session/epoch before
+policy startup. Native independently requires the exact required handler's
+successful completion and absence of error/abort/shutdown before opening ready.
+Each dispatch and lazy skill read needs the same live epoch/current and verified
+bytes; both reload paths close and re-admit. Fresh/resume/nested contexts cannot
+restore readiness from a receipt. Cooperative cancellation does not undo effects.
+
+The full test runner and both direct OMP structural suites admit their source
+before any payload import/child. The default fixture and an explicit
+`HARNESS_TEST_OMP_SOURCE` share the fixed code/data manifest and current filesystem
+ownership checks; the test source identity confers no runtime authority.
+Public/core tests use owned source-equal kernels and explicit fake releases/effect
+sinks. Their structural result is always `ready=false, inventory_admitted=false`;
+reading expected skill files is not native resolver/consumer evidence. Native
+source tests and later build/delivery/installed caps/normal40/privacy/restore and
+actual effect0/1 canary remain separate gates. Caps/codecs/receiver1000 and original
+149-3/source6 boundaries are unchanged; raw aggregate bytes are not wire-fit proof.
 
 ### Typed OMP host/profile enrollment
 
@@ -1273,3 +1320,125 @@ The launcher prefers visible failures over silent fallback when a boundary is am
 - isolated-session apply, verification, remote comparison, or verified readback mismatch remains a recoverable `CONFLICT`; a post-push readback outage remains `INTEGRATING` for remote-history reconciliation;
 - failed runtime-home preparation stops the selected runtime;
 - app-bundled Codex fallback requires explicit opt-in.
+
+Both OMP continuation and required-loading fixtures admit the selected real jq
+physical directory, rather than its shared bin alias, alongside their existing
+denial-tools (where used) and system paths. The production dependency binding,
+unsafe-ancestor and shadow checks remain unchanged; fixture preparation PATH is
+separate from the unchanged native environment. Missing or refused jq is a setup
+failure, with no skipped oracle or native fallback.
+The shell-suite dispatcher emits fixed failure metadata (suite basename,
+interpreter basename and exit status), retaining original child streams, status,
+fail-fast behavior, skip policy and success accounting. Metadata is emitted only
+after a child returns nonzero; external interruption or unavailable logs may still
+leave the actual internal failure unobserved. No guard or assertion is relaxed.
+Required-loading scopes this preparation PATH across its entry child, in-process
+readonly revalidation and CLI validator for the fixture lifetime. Cleanup restores
+the caller environment; the validation assertions and production guards are unchanged.
+
+The standard ephemeral GitHub-hosted `macos-15` job has a CI-only prerequisite
+between Homebrew installation and the unchanged strict jq proof. The dedicated
+`test/omp-ci-owned-homebrew.py` requires consistent `GITHUB_ACTIONS=true`,
+`RUNNER_ENVIRONMENT=github-hosted` and `RUNNER_OS=macOS` fields inside that trusted
+job. These fields do not authenticate a local machine; this is never a personal
+or shared-installation maintenance route.
+
+It traverses the fixed `/` -> `opt` -> `homebrew` -> `Cellar` chain using retained
+no-follow directory descriptors and matched named/descriptor identity, type,
+owner and mode. Both target records are admitted before any change. Only
+`/opt/homebrew` and `/opt/homebrew/Cellar` can be mutated, solely by bound-fd
+`fchmod(before_mode & ~0o022)` for the ordinary current uid. Root-owned safe
+paths are verified no-ops; root-owned unsafe and all foreign-owned paths refuse.
+Other permission/special bits, ownership and contents are preserved; the helper
+uses no ACL-changing API, recursive operation, sudo, chown or tool copy.
+
+Fresh named/descriptor bindings and exact modes are checked before each change,
+afterward and before success. The two changes are not atomic: any mismatch or
+operation/cleanup failure stops nonzero with closed numeric before/after metadata
+and explicit changed, unattempted or unavailable state. There is no retry,
+rollback that re-adds write bits, partial PASS or continued strict proof after
+failure. No kernel compare-and-swap against arbitrary same-uid mutation is
+promised. Synthetic tests cover owned trees and injected uid/race/error
+observations; actual hosted prerequisite admission and remaining dependency
+ancestors still require new-source CI evidence. This adds no native/model proof.
+
+The portable `test/omp-real-jq-binding.py` derives its source root from its actual
+file location and reuses the admitted continuation fixture and unchanged
+production dependency preparation. Its ordinary mode accepts truthful system
+binding; its unchanged `--require-non-system` mode requires no jq in the
+unmodified `/usr/bin:/bin` search and a physical parent outside those directories.
+Both modes check whole jq bytes, all manifest bindings, a real synthetic query
+and native calls 0. A system host still strictly returns
+`REFUSED/NON_SYSTEM_JQ_REQUIRED`, exit 2; this is not a fallback PASS.
+
+CI's `test/omp-jq-ci-proof.py` checks a frozen, public-safe actual093 evidence
+capsule at `test/fixtures/omp-jq-v1-093-evidence.json` and nine whole source pins.
+Job 118160822054 at `093f664de2647f358eb24c059f991a5f16ae6956` actually
+proved non-system selection/manifest/query/native0, satisfying V1's historical
+evidence condition for the unchanged source closure. Its log/line/source digests
+are retained; private preparation paths, dependency lists and raw logs/auth are
+excluded. Source changes fail historical reuse, not silently refresh it.
+
+After pure `test/test_omp_jq_ci_proof.py`, each current CI runs the original
+inspector ordinarily then strictly, without a shell or retry. Actual system
+binding requires strict exit2 with the exact refusal and is honestly reported
+`SYSTEM/REFUSAL_VERIFIED/current_non_system_physical_proof=false`. Actual
+non-system binding requires ordinary and strict exit0/PASS and is reported
+`NON_SYSTEM/FALLBACK_VERIFIED/true`. Every result retains exact types,
+selected/physical/hash/manifest/query/native0/copy=false/replacement=false checks;
+selected tool facts must be stable across calls. Historical and current host
+binary hashes need not equal. Ordinary failure short-circuits strict; all
+unexpected output, stderr, exceptions, timeout and mismatch fail closed.
+Only bounded statuses/digests are logged. Each stream has an 8192-byte
+accepted-output limit and each call a 60-second timeout, without a streaming
+memory or process-descendant containment claim. Source4, guards, native env,
+owned permissions, original syntax/docs/full suites and 20-minute job remain
+unchanged. No assertion or oracle is skipped. The old per-job fallback-host
+requirement is explicitly replaced by this historical-plus-current-branch
+contract; neither historical evidence nor pure tests prove a new whole-CI PASS.
+Root still requires normal actual CI before merge/release/install.
+
+## CI regression partition
+
+`./test/run-all.sh` without arguments still executes the full suite in its
+original order, with declared interpreters, source admission, environment,
+conditional skips and first-error status preserved. The initial partition keeps
+all 124 existing suite invocations and appends `test_run_all_partition.py` (125
+total). The four preservation suites count toward coverage even though the old
+summary did not increment its passed counter for them.
+
+CI reuses that inventory and executor through
+`./test/run-all.sh --ci-group GROUP --ci-result OWNED_FILE`. Only four literal
+groups are accepted:
+
+- `headless`: `test-harness-headless.sh` and `test-headless-target.sh`.
+- `shell`: all other default shell suites, in their existing relative order.
+- `preservation`: the existing four preservation Python suites, in order.
+- `python`: profile, MCP, remaining Python and portable-source tests, in order,
+  followed by the new partition regression.
+
+New default shell and Python entries remain covered by the same inventory; no
+independent CI allowlist may silently omit them. Each group runs serially on an
+independent `macos-15` job with its own checkout, home and temporary state and a
+20-minute limit. Every regression job retains the same pinned checkout, runtime
+bootstrap, owned Homebrew tests/preparation, source-bound jq tests/proof, shell
+syntax and documentation checks. No preparation result or fixture state is
+borrowed from another job. Existing guard, native environment and negative
+oracles remain unchanged.
+
+The original required `test` job is an `always()` aggregate with all four fixed
+regression jobs in `needs`. All four must have the literal result `success`.
+`./test/run-all.sh --ci-verify` checks the fixed typed inputs
+`CI_RESULT_HEADLESS`, `CI_RESULT_SHELL`, `CI_RESULT_PRESERVATION` and
+`CI_RESULT_PYTHON`. They must match the current run, attempt, actual execution
+checkout and source/inventory digests. A PR head is distinct from its merge
+checkout; neither may substitute for the other. Scheduled and actually completed
+IDs, including only the original permitted conditional skips, must form the
+ordered, disjoint full inventory exactly once. Missing, duplicate, extra,
+malformed, failed, cancelled, skipped-job or partial results fail closed. A PASS
+string, count alone or cached result is insufficient. The aggregate also retains
+a 20-minute limit and does not rerun the regression suites.
+
+This changes scheduling, not test scope or acceptance. Parallel completion time
+and a new whole-CI PASS require actual same-source job results; source or fake
+proof alone does not establish either, or native/provider behavior.

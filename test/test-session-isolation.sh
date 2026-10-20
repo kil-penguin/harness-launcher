@@ -78,6 +78,7 @@ git init --bare -q "$REMOTE"
 git -C "$SOURCE" add tracked.txt && git -C "$SOURCE" commit -qm source-clean
 git -C "$SOURCE" remote add origin "$REMOTE"
 git -C "$SOURCE" push -q -u origin main
+git --git-dir="$REMOTE" symbolic-ref HEAD refs/heads/main
 clean_close="$(create)"; clean_close_id="$(printf '%s\n' "$clean_close" | sed -n 's/^HARNESS_SESSION_ID=//p')"
 HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" close "$clean_close_id"
 grep -qx state=CLOSED "$STATE/sessions/$clean_close_id/journal" || { echo 'FAIL: closing a clean session must terminate it without submission'; exit 1; }
@@ -491,13 +492,112 @@ deliver_headless
 git --git-dir="$REMOTE" show main:hl-linked.txt >/dev/null || { echo 'FAIL: a symlinked .git must not stop headless delivery'; exit 1; }
 [[ -z "$(ls -A "$TMP/evil-git")" ]] || { echo 'FAIL: broker git wrote through a symlinked session .git'; exit 1; }
 # Headless marker without its trusted git dir fails closed.
+observe_missing_trusted() {
+  "$PY_ABS" -I -S -B - "$@" 2>/dev/null <<'PY'
+import json, os, stat, sys
+
+states = {'OPEN', 'ABANDONED', 'CLOSED', 'SUBMITTED', 'INTEGRATING', 'DELIVERED', 'CONFLICT', 'DISCARDED', 'OTHER', 'UNREADABLE'}
+markers = {'present', 'absent', 'unreadable'}
+trusted = {'real-directory', 'symlink', 'other', 'absent', 'unreadable'}
+
+def read_metadata(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as f:
+        info = os.fstat(f.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 8192:
+            raise ValueError()
+        data = f.read(8193)
+    if len(data) > 8192 or b'\0' in data:
+        raise ValueError()
+    return data.decode('utf-8')
+
+def state_at(record):
+    try:
+        value = next((s[6:] for s in read_metadata(record + '/journal').split('\n') if s.startswith('state=')), '')
+        return value if value in states else 'OTHER'
+    except Exception:
+        return 'UNREADABLE'
+
+def presence(path, named=False):
+    try:
+        (os.lstat if named else os.stat)(path)
+        return 'present'
+    except FileNotFoundError:
+        return 'absent'
+    except Exception:
+        return 'unreadable'
+
+def trusted_before(path):
+    try:
+        mode = os.lstat(path).st_mode
+        return 'symlink' if stat.S_ISLNK(mode) else 'real-directory' if stat.S_ISDIR(mode) else 'other'
+    except FileNotFoundError:
+        return 'absent'
+    except Exception:
+        return 'unreadable'
+
+def same_path(record, field, selected, physical=False):
+    try:
+        value = read_metadata(record + '/' + field).rstrip('\n')
+        if not value or '\n' in value:
+            return 'unreadable'
+        return value == (os.path.realpath(selected) if physical else selected)
+    except Exception:
+        return 'unreadable'
+
+def snapshot(raw, choices, fallback):
+    try:
+        value = json.loads(raw) if len(raw) <= 4096 else None
+        if type(value) is list and len(value) == len(choices) and all(check(v) for check, v in zip(choices, value)):
+            return value
+    except Exception:
+        pass
+    return fallback
+
+try:
+    mode = sys.argv[1]
+    if mode in ('before', 'pre', 'after'):
+        record, selected_root, source = sys.argv[2:5]
+        if mode == 'before':
+            value = [state_at(record), presence(record + '/headless'), trusted_before(record + '/trusted.git'), same_path(record, 'session-root', selected_root), same_path(record, 'source-root', source, physical=True)]
+        elif mode == 'pre':
+            value = [state_at(record), presence(record + '/headless'), presence(record + '/trusted.git', named=True)]
+        else:
+            value = state_at(record)
+        print(json.dumps(value, separators=(',', ':')))
+    elif mode == 'emit':
+        stage, before, pre, after, raw_rc = sys.argv[2:7]
+        rc = json.loads(raw_rc)
+        if stage not in ('missing-trusted-exit', 'missing-trusted-close') or type(rc) is not int or not 0 <= rc <= 255:
+            raise ValueError()
+        is_state = lambda v: type(v) is str and v in states
+        is_marker = lambda v: type(v) is str and v in markers
+        is_match = lambda v: type(v) is bool or type(v) is str and v == 'unreadable'
+        b = snapshot(before, [is_state, is_marker, lambda v: type(v) is str and v in trusted, is_match, is_match], ['UNREADABLE', 'unreadable', 'unreadable', 'unreadable', 'unreadable'])
+        p = snapshot(pre, [is_state, is_marker, is_marker], ['UNREADABLE', 'unreadable', 'unreadable'])
+        a = snapshot('[' + after + ']', [is_state], ['UNREADABLE'])[0]
+        value = dict(stage=stage, record_state_before_remove=b[0], headless_marker_before_remove=b[1], trusted_before_remove=b[2], selected_root_equals_record_root=b[3], selected_source_equals_record_source=b[4], trusted_after_remove=p[2], record_state_immediately_before_exit=p[0], record_state_after_exit=a, headless_marker_immediately_before_exit=p[1], original_exit_or_close_rc=rc)
+        line = ('MISSING_TRUSTED ' + json.dumps(value, separators=(',', ':'), ensure_ascii=True) + '\n').encode('ascii')
+        if len(line) <= 512:
+            # One bounded write, no truncation, retry or raw fallback on failure.
+            os.write(1, line)
+except Exception:
+    pass
+PY
+}
 headless_session
 printf 'x\n' > "$hs_root/hl-missing.txt"
+# Category-only snapshots of this selected record, not proof of an internal branch.
+missing_before="$(observe_missing_trusted before "$STATE/sessions/$hs_id" "$hs_root" "$SOURCE")" || missing_before=''
 rm -rf "$STATE/sessions/$hs_id/trusted.git"
+missing_pre="$(observe_missing_trusted pre "$STATE/sessions/$hs_id" "$hs_root" "$SOURCE")" || missing_pre=''
 rc=0; HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" exit "$hs_id" 2>/dev/null || rc=$?
-[[ "$rc" == 6 ]] || { echo "FAIL: a headless record without trusted.git must refuse (rc=$rc)"; exit 1; }
+# Save the exit rc first; this snapshot is after exit, never after close.
+missing_after="$(observe_missing_trusted after "$STATE/sessions/$hs_id" "$hs_root" "$SOURCE")" || missing_after=''
+[[ "$rc" == 6 ]] || { observe_missing_trusted emit missing-trusted-exit "$missing_before" "$missing_pre" "$missing_after" "$rc" || :; echo "FAIL: a headless record without trusted.git must refuse (rc=$rc)"; exit 1; }
 rc=0; HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" close "$hs_id" 2>/dev/null || rc=$?
-[[ "$rc" == 6 ]] || { echo "FAIL: close must refuse without trusted.git (rc=$rc)"; exit 1; }
+# Close failure carries the same named exit snapshots, not close-internal state.
+[[ "$rc" == 6 ]] || { observe_missing_trusted emit missing-trusted-close "$missing_before" "$missing_pre" "$missing_after" "$rc" || :; echo "FAIL: close must refuse without trusted.git (rc=$rc)"; exit 1; }
 
 echo 'PASS: headless broker git uses the launcher-owned git dir, never the session .git'
 

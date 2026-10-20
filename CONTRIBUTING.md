@@ -66,6 +66,22 @@ Run every test through its declared interpreter:
 ./test/run-all.sh
 ```
 
+The no-argument command remains the full ordered suite. The CI partition keeps
+all 124 existing suite invocations in their original relative order and appends
+one partition regression (125 total); existing interpreter, source admission,
+conditional-skip and first-error behavior are unchanged.
+
+CI uses the same runner in four fixed groups: `headless`, `shell`,
+`preservation` and `python`. Each runs sequentially within its own isolated
+`macos-15` job with a 20-minute limit. Each job retains dependency installation,
+owned Homebrew preparation, source-bound jq proof, shell syntax and docs checks.
+The required `test` aggregate needs all four jobs to return `success` and
+verifies their current-run/source inventory coverage; failed, cancelled,
+skipped, missing or partial results cannot pass. New default tests must remain
+covered exactly once. See [CI regression
+partition](docs/architecture.md#ci-regression-partition) for the CI-only
+interfaces. This does not replace the full local command above.
+
 `test-codex-home-prepare.sh` exercises the production `/usr/bin/lockf` contract. The runner reports it as skipped only on hosts where that macOS system binary is unavailable; run it on a supported Mac before merging changes to shared Codex cache or browser-plugin behavior.
 
 Run syntax checks before opening a pull request:

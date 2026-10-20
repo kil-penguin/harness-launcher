@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import stat
 import sys
 import unicodedata
@@ -265,10 +266,26 @@ def launcher_binding(consumer, companions=()):
             'manifest_sha256': current['manifest_sha256'], 'consumer_sha256': consumer_sha}
 
 
-def binary_binding(path, release):
-    keys(release, 'version source_revision')
+REQUIRED_CONTRACT = 'w07.required-resolver-consumer.v1'
+REQUIRED_VERSION = '18.11.3-kh.w07.1'
+BASE_REVISION = '96894a6147d8cc64b7e00ad3a7d7178fd93b9531'
+
+
+def check_binary_release(release):
+    require(type(release) is dict)
+    if release.get('version') == REQUIRED_VERSION:
+        keys(release, 'version source_revision contract_id upstream_base_version upstream_base_revision source_patch_sha256 build_provenance_sha256')
+        require(release['contract_id'] == REQUIRED_CONTRACT and release['upstream_base_version'] == '18.11.3' and
+                release['upstream_base_revision'] == BASE_REVISION, BINDING)
+        sha(release['source_patch_sha256']); sha(release['build_provenance_sha256'])
+    else:
+        keys(release, 'version source_revision')
     text(release['version'])
     require(type(release['source_revision']) is str and re.fullmatch('[0-9a-f]{40}', release['source_revision']))
+
+
+def binary_binding(path, release):
+    check_binary_release(release)
     h, meta = file_sha(path, 0o555)
     return {'path': str(path), 'sha256': h, 'bytes': meta.st_size,
             'uid': meta.st_uid, 'mode': 0o555, 'single_link': True, 'release': release}
@@ -310,8 +327,7 @@ def check_row(row):
     binary = row['binary']; keys(binary, 'path sha256 bytes uid mode single_link release')
     text(binary['path']); sha(binary['sha256']); integer(binary['bytes'], True); integer(binary['uid']); integer(binary['mode'])
     require(binary['mode'] == 0o555 and binary['single_link'] is True)
-    keys(binary['release'], 'version source_revision'); text(binary['release']['version'])
-    require(type(binary['release']['source_revision']) is str and re.fullmatch('[0-9a-f]{40}', binary['release']['source_revision']))
+    check_binary_release(binary['release'])
     ns = row['native_home']; keys(ns, 'path root_identity mode owner_marker')
     text(ns['path']); check_identity(ns['root_identity']); integer(ns['mode']); require(ns['mode'] == 0o700)
     marker = ns['owner_marker']; keys(marker, 'path sha256 mode identity')
@@ -452,6 +468,108 @@ def select_continuation_source(source, registry, config_root, consumer):
         raise
     except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError):
         raise ProjectionError() from None
+
+
+def required_dependencies():
+    """Bind actual bridge children, not the launcher's inherited native env.
+
+    The system Python is also used by the original shared-guard fixtures. The
+    bridge sets HARNESS_PYTHON only in its children, never in the native env13.
+    """
+    result = []
+    for name, path in (('bash', '/bin/bash'), ('jq', shutil.which('jq')),
+                       ('python3', '/usr/bin/python3')):
+        require(path is not None, 'OMP_REQUIRED_DEPENDENCY_MISSING')
+        resolved = Path(path).resolve(strict=True)
+        # System and same-user executables are acceptable, writable ancestors
+        # are not. Match the required extension's ownedRead closure boundary.
+        for node in (resolved, *resolved.parents):
+            info = node.lstat()
+            require(info.st_uid in (0, os.getuid()) and not info.st_mode & 0o022,
+                    'OMP_REQUIRED_DEPENDENCY_UNSAFE')
+        require(resolved.is_file() and os.access(resolved, os.X_OK), BINDING)
+        result.append({'name': name, 'path': path,
+                       'sha256': hashlib.sha256(resolved.read_bytes()).hexdigest()})
+    # The extension constructs this same PATH and checks first executable
+    # resolution. Never trust an inherited PATH that shadows a declared child.
+    search = list(dict.fromkeys(str(Path(next(d['path'] for d in result if d['name'] == name)).parent)
+                               for name in ('python3', 'jq', 'bash'))) + ['/usr/bin', '/bin']
+    for dep in result:
+        reached = shutil.which(dep['name'], path=':'.join(search))
+        require(reached is not None and Path(reached).resolve() == Path(dep['path']).resolve(),
+                'OMP_REQUIRED_DEPENDENCY_SHADOW')
+    return result
+
+
+def required_preparation(source, consumer, workspace, binary, namespace, caller_argv, bundle_manifest=None):
+    """Re-derive current canonical expectation, never an actual Skill inventory.
+
+    bundle_manifest selects read-only check mode. No native/helper subprocess,
+    publisher, lease acquisition, profile mutation or resolver occurs here.
+    """
+    source = physical(source); workspace = physical(workspace); directory(workspace)
+    current = select_continuation_source(str(source), str(registry_dir()), str(source), consumer)
+    require(current['binary_path'] == binary and current['namespace_path'] == namespace, BINDING)
+    release = dict(current['binary_release'], binary_sha256=current['binary_sha256'])
+    require(release.get('version') == REQUIRED_VERSION and release.get('contract_id') == REQUIRED_CONTRACT,
+            'OMP_REQUIRED_NATIVE_RELEASE')
+    compiler_path = source/'core/scripts/harness_compile.py'
+    compiler_raw, _ = read_file(compiler_path, None, 262144)
+    spec = importlib.util.spec_from_file_location('_omp_canonical_compiler', compiler_path)
+    compiler = importlib.util.module_from_spec(spec); spec.loader.exec_module(compiler)
+    try:
+        compiler.validate_omp_native_release(release)
+        compiler.check_source(source); data = compiler.load_source(source)
+        expected = {k:v for k,v in current.items() if k not in
+                    ('index_generation','state_generation','enrollment_generation','valid_until','lane')}
+        # The registered resolver is verified by select_continuation_source's launcher closure.
+        resolver_path = Path(consumer).with_name('harness_profile_resolver.py')
+        spec = importlib.util.spec_from_file_location('_omp_prepare_profile', resolver_path)
+        resolver = importlib.util.module_from_spec(spec); spec.loader.exec_module(resolver)
+        profile = resolver.resolve(source, registry_dir())
+        require(profile.harness_root == source, BINDING)
+        selection = dict(schema=2, profile=profile.profile, runtime='omp', runtime_version=release['version'],
+            contract_id=REQUIRED_CONTRACT, native_release=release,
+            source_or_release_binding=digest(canonical({'source':str(source),'identity':directory(source),
+                'compiler_sha256':digest(compiler_raw),'current':expected})),
+            repo_workspace_identity=digest(canonical({'path':str(workspace),'identity':directory(workspace)})),
+            bundle_ids=['canonical-policy'], approved_overrides_sha256=digest(canonical({})), hooks=[],
+            skills=[e['name'] for e in data.get('skills',{}).get('entries',[])
+                    if e.get('omp_mode') in ('required','auto') or e.get('omp_required')],
+            extensions=[e['id'] for e in data.get('hooks',{}).get('omp_extensions',[])
+                        if e.get('omp_mode') in ('required','auto')],
+            bridge_rewrites=[f'{e["event"]}:{e.get("matcher","*")}:{e["script"]}'
+                for e in data.get('hooks',{}).get('entries',[]) if e.get('omp_rewrite_script')],
+            workspace=str(workspace), hook_dependencies=required_dependencies(),
+            current_projection={'helper':str(Path(consumer).with_name('harness_omp_projection.py')),
+                'sha256':current['projection_helper_sha256'],'python':'/usr/bin/python3',
+                'home':str(Path.home()),'source':str(source),'registry':str(registry_dir()),
+                'consumer':consumer,'expected':expected})
+        relative, files = compiler.render_omp_bundle(source, data, selection)
+        manifest = json.loads(files['selection.json']); bundle = source/relative
+        if bundle_manifest is not None:
+            require(physical(bundle_manifest) == bundle/'selection.json', BINDING)
+            compiler.write_omp_bundle(source, data, selection, check=True)
+        else:
+            # Refuse protected caller arguments before even compiler-owned writes.
+            compiler.validate_omp_caller_argv(manifest, caller_argv)
+            require(compiler.write_omp_bundle(source, data, selection) == relative, BINDING)
+        prepared, argv = compiler.prepare_omp_bundle(bundle, manifest, caller_argv)
+        require(read_file(compiler_path, None, 262144)[0] == compiler_raw, BINDING)
+        fresh_current = select_continuation_source(str(source), str(registry_dir()), str(source), consumer)
+        require(all(fresh_current.get(k) == v for k,v in expected.items()), BINDING)
+        require(len(canonical(prepared)) <= LIMIT, 'OMP_REQUIRED_METADATA_CAP')
+        return prepared, argv
+    except compiler.HarnessCompileError:
+        raise ProjectionError('OMP_REQUIRED_SOURCE_OR_RESOURCE_REFUSED') from None
+
+
+def prepare_required(source, consumer, workspace, binary, namespace, caller_argv):
+    return required_preparation(source, consumer, workspace, binary, namespace, caller_argv)[1]
+
+
+def validate_required_prepared(source, consumer, workspace, binary, namespace, bundle_manifest):
+    return required_preparation(source, consumer, workspace, binary, namespace, [], bundle_manifest)[0]
 
 
 def sync_directory(path):
@@ -640,9 +758,17 @@ class Publisher:
 
 
 def main(argv):
-    # Private shell bridge is readonly. All writes require the root controller
-    # to call Publisher directly; no public user-facing command is registered.
+    # Projection/current verbs are readonly. Normal prepare may only ask the
+    # canonical compiler to emit bundles; publication still uses Publisher.
     try:
+        if len(argv) == 8 and argv[1] == 'validate-required-prepared':
+            value = validate_required_prepared(*argv[2:])
+            sys.stdout.buffer.write(canonical(value) + b'\n')
+            return 0
+        if len(argv) >= 7 and argv[1] == 'prepare-required':
+            value = prepare_required(*argv[2:7], argv[7:])
+            sys.stdout.buffer.write(b'REQUIRED_ARGV\0' + b''.join(a.encode('utf-8')+b'\0' for a in value) + b'END\0')
+            return 0
         if len(argv) == 6 and argv[1] == 'select-continuation-source':
             value = select_continuation_source(*argv[2:])
             sys.stdout.buffer.write(canonical(value) + b'\n')
