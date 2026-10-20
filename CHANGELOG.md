@@ -12,12 +12,18 @@ Notable changes are recorded here. This project follows semantic versioning for 
   and 1M context when the launch is top-level and the record is bound to the
   verified origin owner (same source root, isolated, same session id). A nested
   or unbound fork keeps `--permission-mode default`. The record joins the fork
-  proof, so a swapped record is refused before exec.
+  proof, so a swapped record is refused before exec. A mode or model keyword
+  (`fast`, `base`, `plan`, `opus`, `rich`, `fable`, `ultracode`) sets its own
+  model and effort, so it suppresses the inherited ones; permission inheritance
+  is unaffected. Inheritance takes effect once the caller passes the prepared
+  `inherited` settings (the kh dispatcher change ships separately).
 - Codex history imports re-apply the origin's recorded approval/sandbox/profile
   for top-level launches. The catalog row now carries `origin_state_home`, and
-  the record is read only from that pool and only when bound to the origin.
+  the record is read only from that pool and only when bound to the origin. A
+  nested (agent-run) import no longer re-applies a kh-pool record that 0.67.0
+  could pick up.
 - The exact-id Claude fork catalog lists only project directories and the target
-  name, and every catalog skips `subagents/` trees. On a large
+  name, and the Claude catalogs skip `subagents/` trees. On a large
   `~/.claude/projects` the fork no longer fails `fork_catalog_incomplete`.
 - OMP projection and continuation records accept an APFS device renumbering when
   the inode and every other field match and the whole directory chain to its

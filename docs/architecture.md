@@ -1298,6 +1298,10 @@ There is no launcher cleanup: Claude's retention sweep removes a session's
 scratchpad together with its transcript, so expect the directory to grow with
 long-lived sessions.
 
+Measured 2026-10-20 on the company MacBook: `find /private/tmp/claude-501 -type s`
+found no `AF_UNIX` sockets, and the base `~/.local/state/cct` is 31 bytes. The
+40-byte cap keeps `<base>/claude-<uid>/` as short as `/tmp/claude-<uid>`.
+
 Known limits, kept on purpose:
 
 - A raw `codex exec` or `codex exec resume` inside a Codex agent inherits the parent's
