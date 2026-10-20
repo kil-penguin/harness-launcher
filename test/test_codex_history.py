@@ -1348,6 +1348,61 @@ class CatalogCostTest(unittest.TestCase):
         "duplicate_archive": [("ambiguous", "duplicate_archive_owner", True)],
     }
 
+    def multi_row_live_home_with_archive(self, name, extra=3):
+        state = self.base / name
+        root, record, home = self.iso_home(state, self.A)
+        directory = next((home / "sessions").rglob("*.jsonl")).parent
+        for index in range(extra):
+            identifier = "33333333-2222-4333-8444-55555555550%d" % index
+            (directory / ("rollout-extra-" + identifier + ".jsonl")).write_text(
+                json.dumps({"type": "session_meta", "payload": {"id": identifier}}) + "\n")
+        self.snap(state, self.A, home, record)
+        self.hide_canonical()
+        return state, home
+
+    def counted(self, home, after_call=None):
+        calls = []
+        real = history_module.source_inventory
+        def wrapper(source, children):
+            result = real(source, children)
+            if Path(source) == home:
+                calls.append(1)
+                if after_call:
+                    after_call(len(calls))
+            return result
+        return calls, mock.patch.object(history_module, "source_inventory", wrapper)
+
+    def test_inventory_is_computed_once_per_home_for_many_rows(self):
+        state, home = self.multi_row_live_home_with_archive("inventory-once")
+        calls, patch = self.counted(home)
+        with patch:
+            result = history_module.catalog_value(self.args(state))
+        self.assertGreaterEqual(len([r for r in result["entries"] if r["snapshot_id"]]), 4)
+        self.assertEqual(len(calls), 1)
+
+    def test_inventory_is_recomputed_when_a_nested_file_changes_between_rows(self):
+        state, home = self.multi_row_live_home_with_archive("inventory-nested")
+        nested = next((home / "sessions").rglob("rollout-extra-*.jsonl"))
+        def mutate(count):
+            if count == 1:
+                nested.write_text(nested.read_text() + "{}\n")
+        calls, patch = self.counted(home, mutate)
+        with patch:
+            history_module.catalog_value(self.args(state))
+        self.assertEqual(len(calls), 2)
+
+    def test_inventory_is_recomputed_when_only_mtime_changes_between_rows(self):
+        state, home = self.multi_row_live_home_with_archive("inventory-mtime")
+        nested = next((home / "sessions").rglob("rollout-extra-*.jsonl"))
+        def mutate(count):
+            if count == 1:
+                info = nested.stat()
+                os.utime(nested, ns=(info.st_atime_ns, info.st_mtime_ns + 5_000_000_000))
+        calls, patch = self.counted(home, mutate)
+        with patch:
+            history_module.catalog_value(self.args(state))
+        self.assertEqual(len(calls), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

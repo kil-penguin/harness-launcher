@@ -882,7 +882,30 @@ def snapshot_entries(store, source):
     return values
 
 
+def inventory_signature(home,children):
+    """Stat-only fingerprint of every artifact source_inventory reads or lists."""
+    rows=[]
+    def add(path):
+        info=path.lstat()
+        rows.append((path.relative_to(home).as_posix(),info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns))
+    for path in home.iterdir():add(path)
+    for child in children:
+        if child.is_dir():
+            for path in child.rglob('*'):add(path)
+    return tuple(sorted(rows))
+
+
 def dedupe_entries(entries,store,keep_private=False):
+    cache={}
+    def inventory(home):
+        # The sha256 inventory is reused only while the stat signature is equal,
+        # so a home that changes during this call is inventoried again.
+        home=Path(home);children=source_children(home)
+        signature=inventory_signature(home,children)
+        hit=cache.get(home)
+        if hit is not None and hit[0]==signature:return hit[1]
+        value=source_inventory(home,children);cache[home]=(signature,value)
+        return value
     groups={}
     for row in entries:groups.setdefault(row['native_id'],[]).append(row)
     result=[]
@@ -895,7 +918,7 @@ def dedupe_entries(entries,store,keep_private=False):
             if parent['source_root']!=entry['source_root'] or parent['source']==owner:lineage_valid=False;continue
             original=Path(parent['source'])
             if original.exists():
-                current=[r for r in source_inventory(original,source_children(original)) if not r.get('excluded')]
+                current=[r for r in inventory(original) if not r.get('excluded')]
                 saved=[r for r in parent['source_inventory'] if not r.get('excluded')]
                 if current!=saved:lineage_valid=False;continue
             superseded.add(parent['source'])
@@ -920,7 +943,7 @@ def dedupe_entries(entries,store,keep_private=False):
             matches=[a for a in archives if a.get('_source_home')==row['home'] and a['isolation_id']==row['isolation_id']]
             for archive in sorted(matches,key=lambda a:(int(a['updated_at']),a['_capture_time']),reverse=True):
                 manifest=archive['_manifest'];home=Path(row['home'])
-                if source_inventory(home,source_children(home))==manifest['source_inventory']:
+                if inventory(home)==manifest['source_inventory']:
                     row['snapshot_id']=archive['snapshot_id'];row['origin_runtime']=archive['origin_runtime'];break
         else:
             owners={(a.get('_source_home'),a['isolation_id']) for a in archives}
