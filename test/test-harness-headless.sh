@@ -1821,7 +1821,7 @@ for _ in $(seq 1 200); do grep -q '^FAKE-CODEX-SETSID' "$RESULT.log" 2>/dev/null
 grandchild="$(sed -n 's/^FAKE-CODEX-GRANDCHILD //p' "$RESULT.log")"
 setsid_child="$(sed -n 's/^FAKE-CODEX-SETSID //p' "$RESULT.log")"
 [[ -n "$grandchild" && -n "$setsid_child" ]] || fail 'codex hang run did not start'
-term_sid="$(sed -n 's/^harness-launcher: isolated session \([0-9A-F-]*\);.*/\1/p' "$RESULT.log")"
+term_sid="$(sed -n 's/^harness-launcher: isolated session \([0-9A-Fa-f-]*\);.*/\1/p' "$RESULT.log")"
 python3 - "$STATE/sessions/$term_sid/runtime.lock" <<'PY' || fail 'the session lease must be held while codex runs'
 import fcntl, sys
 with open(sys.argv[1], 'r+') as f:
