@@ -1416,6 +1416,17 @@ Gateway modes source local files under `config/.local/` and probe the configured
 
 Anything sent through a gateway leaves the local runtime boundary. Users must trust the gateway endpoint and its operator. Gateway configuration and credentials should never be committed.
 
+## Session creation concurrency
+
+New sessions reserve their own creation identity and OS lease before work,
+prepare without the dispatcher's global activation lock, and publish the normal
+session journal only after all required runtime binding is verified. Source
+fetch coordination is repository-local; cloning and different profile launches
+remain independent. Interrupted or uncertain publication uses bounded,
+source-scoped recovery with actual lease and identity checks.
+See [concurrent session creation](session-creation.md) for admission, readback,
+old-runtime compatibility and the shared regression contract.
+
 ## Failure behavior
 
 The launcher prefers visible failures over silent fallback when a boundary is ambiguous:

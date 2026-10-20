@@ -2,7 +2,18 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
-## Unreleased — Usage collection
+## 0.70.0 — 2026-10-20
+
+- Reserve a private session identity and creation lease before fetch or clone.
+  Preparation withholds the normal session journal until admission, including
+  standalone create and caller-owned immutable runtime bindings. Interrupted
+  creation is reconciled only with verified ownership, leases and binding readback;
+  uncertain or already admitted sessions are preserved.
+- Coordinate fetch and exact base selection per source repository with a bounded
+  wait. Clones and unrelated profiles proceed independently; existing sessions
+  retain their original journal and runtime lease semantics.
+
+## 0.69.0 — 2026-10-20
 
 - Add a usage-collection policy: only harnesses that opt in with
   `HARNESS_AGENT_USAGE_COLLECT="1"` on an enrolled device stay visible to an
