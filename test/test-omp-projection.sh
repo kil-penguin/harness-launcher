@@ -267,5 +267,123 @@ class ProjectionTests(unittest.TestCase):
         run(['codex','--passthrough','auth','status'],97)
         self.assertEqual(codex_route.read_text(),'--passthrough\nauth\nstatus\n')
 
+    # --- D: device renumbering tolerance (APFS renumbers st_dev at reboot) ---
+    FIELDS = {
+        'host': (lambda r: r['host'], lambda r: r['host']['profile_registry_directory_identity']),
+        'profile_root': (lambda r: r['profile_binding'], lambda r: r['profile_binding']['root_identity']),
+        'registry_file': (lambda r: r['profile_binding'], lambda r: r['profile_binding']['registry']['identity']),
+        'native_home': (lambda r: r['native_home'], lambda r: r['native_home']['root_identity']),
+    }
+
+    def stored_identities(self, field, index, state):
+        """Every stored copy of one identity field (index/state host; entry/row)."""
+        if field == 'host':
+            return [index['host']['profile_registry_directory_identity'],
+                    state['host']['profile_registry_directory_identity']]
+        row = state['profiles']['ex']; entry = index['enrolled_profiles']['ex']
+        if field == 'profile_root':
+            return [entry['profile_binding']['root_identity'], row['profile_binding']['root_identity']]
+        if field == 'registry_file':
+            return [entry['profile_binding']['registry']['identity'], row['profile_binding']['registry']['identity']]
+        return [row['native_home']['root_identity']]
+
+    def rewrite(self, edit):
+        index = json.loads(self.index.read_bytes()); state = json.loads(self.state.read_bytes())
+        edit(index, state)
+        index['enrolled_profiles']['ex']['payload_row_sha256'] = hashlib.sha256(encoded(state['profiles']['ex'])).hexdigest()
+        put(self.state, state); put(self.index, index)
+
+    def renumber(self, *fields, delta=1, key='dev'):
+        def edit(index, state):
+            for field in fields:
+                for ident in self.stored_identities(field, index, state): ident[key] += delta
+        self.rewrite(edit)
+
+    def parent_of(self, field):
+        return {'host': self.registry.parent, 'profile_root': self.profile.parent,
+                'registry_file': self.registry, 'native_home': self.ns.parent}[field]
+
+    def other_device(self, parents):
+        real = self.m.device
+        guard = {str(p) for p in parents}
+        return patch.object(self.m, 'device', side_effect=lambda path: real(path) + 9 if str(path) in guard else real(path))
+
+    def test_D_renumbered_devices_are_accepted_by_select_and_validate_selected(self):
+        self.enroll(); want = self.select()
+        self.renumber('host', 'profile_root', 'registry_file', 'native_home')
+        self.assertEqual(self.select(), want)
+        row = json.loads(self.state.read_bytes())['profiles']['ex']
+        self.m.validate_selected(row, 'ex', str(self.profile), str(self.consumer))
+        # Records are never rewritten by selection.
+        before = (self.index.read_bytes(), self.state.read_bytes()); self.select()
+        self.assertEqual(before, (self.index.read_bytes(), self.state.read_bytes()))
+
+    def test_D_each_field_alone_is_accepted_and_ino_or_uid_change_is_refused(self):
+        self.enroll(); want = self.select(); index = self.index.read_bytes(); state = self.state.read_bytes()
+        for field in self.FIELDS:
+            with self.subTest(field=field, case='dev'):
+                self.renumber(field); self.assertEqual(self.select(), want)
+            self.index.write_bytes(index); self.state.write_bytes(state)
+            for key in ('ino', 'uid'):
+                with self.subTest(field=field, case=key):
+                    self.renumber(field, key=key); self.rejected(self.select, 'OMP_BINDING_MISMATCH')
+                self.index.write_bytes(index); self.state.write_bytes(state)
+            with self.subTest(field=field, case='dev+ino'):
+                self.renumber(field); self.renumber(field, key='ino'); self.rejected(self.select, 'OMP_BINDING_MISMATCH')
+            self.index.write_bytes(index); self.state.write_bytes(state)
+
+    def test_D_validate_selected_refuses_ino_change_with_renumbered_dev(self):
+        self.enroll(); self.renumber('profile_root', 'native_home')
+        row = json.loads(self.state.read_bytes())['profiles']['ex']
+        for edit in (lambda r: r['profile_binding']['root_identity'].update(ino=r['profile_binding']['root_identity']['ino'] + 1),
+                     lambda r: r['native_home']['root_identity'].update(ino=r['native_home']['root_identity']['ino'] + 1)):
+            bad = copy.deepcopy(row); edit(bad)
+            self.rejected(lambda: self.m.validate_selected(bad, 'ex', str(self.profile), str(self.consumer)), 'OMP_BINDING_MISMATCH')
+
+    def test_D_two_old_devices_for_one_new_device_are_refused(self):
+        self.enroll()
+        def edit(index, state):
+            for ident in self.stored_identities('host', index, state): ident['dev'] += 1
+            for ident in self.stored_identities('native_home', index, state): ident['dev'] += 2
+        self.rewrite(edit); self.rejected(self.select, 'OMP_BINDING_MISMATCH')
+
+    def test_D_devmap_consistency_unit(self):
+        D = self.m.DevMap; a = {'dev': 1, 'ino': 5, 'uid': 7}
+        def cur(dev, ino=5): return {'dev': dev, 'ino': ino, 'uid': 7}
+        with patch.object(self.m, 'remap_chain', return_value=True):
+            m = D(); self.assertTrue(m.match(a, cur(2), '/x')); self.assertTrue(m.match(a, cur(2), '/y'))
+            self.assertFalse(m.match(a, cur(3), '/z'))                      # one old -> two new
+            m = D(); self.assertTrue(m.match(a, cur(2), '/x'))
+            self.assertFalse(m.match(dict(a, dev=4), cur(2), '/y'))         # two old -> one new
+            m = D(); self.assertTrue(m.match(a, cur(1), '/x'))              # unchanged device
+            self.assertFalse(m.match(a, cur(2), '/y'))                      # same old device also moved
+            m = D(); self.assertTrue(m.match(a, cur(2), '/x'))
+            self.assertTrue(m.match(dict(a, dev=2), cur(2), '/y'))          # already-current device
+            self.assertFalse(D().match(a, cur(2, ino=6), '/x'))
+            self.assertFalse(D().match(a, dict(cur(2), gid=1), '/x'))
+            self.assertFalse(D().match(dict(a, dev=True), cur(1), '/x'))
+            self.assertFalse(D().match([], cur(2), '/x'))
+        with patch.object(self.m, 'remap_chain', return_value=False):
+            self.assertFalse(D().match(a, cur(2), '/x'))
+
+    def test_D_mount_at_parent_is_refused_per_field(self):
+        self.enroll(); want = self.select()
+        for field in self.FIELDS:
+            self.renumber(field)
+            with self.subTest(field=field):
+                with self.other_device([self.parent_of(field)]):
+                    self.rejected(self.select, 'OMP_BINDING_MISMATCH')
+                self.assertEqual(self.select(), want)  # same fixture, no mount: accepted
+            self.renumber(field, delta=-1)
+
+    def test_D_mount_between_object_and_anchor_is_refused_even_when_parent_matches(self):
+        self.enroll(); self.renumber('host')
+        # .config is two levels above the registry directory, below the home anchor.
+        with self.other_device([self.registry.parent.parent]):
+            self.rejected(self.select, 'OMP_BINDING_MISMATCH')
+        with self.other_device([self.home]):
+            self.rejected(self.select, 'OMP_BINDING_MISMATCH')
+
+
 if __name__=='__main__': unittest.main(verbosity=2)
 PYTEST

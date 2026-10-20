@@ -453,5 +453,100 @@ raise SystemExit(EXIT_CODE)
         row=json.loads(self.record.read_bytes());self.assertEqual(row['status'],'BLOCKED')
         self.assertEqual(row['last_terminal_status'],7);self.assertEqual(self.events.read_text(),'finish\n')
 
+    # --- D: device renumbering tolerance (APFS renumbers st_dev at reboot) ---
+    ORIGIN_FIELDS = ('workspace_identity', 'runtime_lock_identity', 'namespace_identity')
+
+    def shift_origin(self, field, key='dev', delta=1):
+        row = json.loads(self.record.read_bytes()); row['kernel_origin'][field][key] += delta; put(self.record, row)
+
+    def load(self):
+        return self.m.load_record(str(self.state), str(self.profile), self.h, str(self.consumer))
+
+    def refused_load(self):
+        with self.assertRaises(self.m.ContinuationError) as c: self.load()
+        self.assertEqual(c.exception.label, 'OMP_CONTINUATION_IDENTITY_CHANGED')
+
+    def unmounted(self, *parents):
+        real = self.m.p.device; guard = {str(x) for x in parents}
+        return patch.object(self.m.p, 'device', side_effect=lambda path: real(path) + 9 if str(path) in guard else real(path))
+
+    def origin_parent(self, field):
+        return {'workspace_identity': self.state/'worktrees', 'runtime_lock_identity': self.record_dir,
+                'namespace_identity': self.ns.parent}[field]
+
+    def test_D_renumbered_origin_devices_are_accepted_without_rewrite(self):
+        self.kernel()
+        for field in self.ORIGIN_FIELDS: self.shift_origin(field)
+        before = self.record.read_bytes()
+        self.assertEqual(self.load()[1], before)
+        self.assertEqual(self.record.read_bytes(), before)
+        self.op('NEW_PREPARE')  # the full operate path accepts it too
+
+    def test_D_each_origin_field_alone_accepts_dev_and_refuses_ino_uid_or_lock_times(self):
+        self.kernel(); good = self.record.read_bytes()
+        for field in self.ORIGIN_FIELDS:
+            with self.subTest(field=field, case='dev'):
+                self.shift_origin(field); self.load(); self.record.write_bytes(good)
+            keys = ['ino', 'uid'] + (['mtime_ns', 'ctime_ns', 'size', 'gid', 'nlink', 'mode'] if field == 'runtime_lock_identity' else [])
+            for key in keys:
+                with self.subTest(field=field, case=key):
+                    self.shift_origin(field, key); self.refused_load(); self.record.write_bytes(good)
+                with self.subTest(field=field, case='dev+'+key):
+                    self.shift_origin(field); self.shift_origin(field, key); self.refused_load(); self.record.write_bytes(good)
+
+    def test_D_inconsistent_origin_device_mapping_is_refused(self):
+        self.kernel()
+        self.shift_origin('workspace_identity', delta=1); self.shift_origin('runtime_lock_identity', delta=2)
+        self.refused_load()
+
+    def test_D_origin_mount_at_parent_is_refused_per_field(self):
+        self.kernel(); good = self.record.read_bytes()
+        for field in self.ORIGIN_FIELDS:
+            self.shift_origin(field)
+            with self.subTest(field=field):
+                with self.unmounted(self.origin_parent(field)): self.refused_load()
+                self.load()
+            self.record.write_bytes(good)
+        # A mount between the lock and the state root (not its direct parent) is refused too.
+        self.shift_origin('runtime_lock_identity')
+        with self.unmounted(self.state/'sessions'): self.refused_load()
+        self.record.write_bytes(good); self.shift_origin('workspace_identity')
+        with self.unmounted(self.state): self.refused_load()
+
+    def native_pair(self):
+        self.kernel(); self.op('NEW_PREPARE'); self.native_file()
+        old = self.m.inspect_native(self.sessions, self.work); new = copy.deepcopy(old)
+        old['file_identity']['dev'] += 1
+        return old, new
+
+    def test_D_same_native_accepts_renumbered_device_only_with_anchor_and_exact_rest(self):
+        old, new = self.native_pair(); ns = str(self.ns)
+        self.m.same_native(old, new, ns)
+        with self.assertRaises(self.m.ContinuationError): self.m.same_native(old, new)  # no anchor, no remap
+        for key in ('ino', 'uid', 'gid', 'nlink', 'mode'):
+            bad = copy.deepcopy(old); bad['file_identity'][key] += 1
+            with self.subTest(key=key), self.assertRaises(self.m.ContinuationError): self.m.same_native(bad, new, ns)
+        bad = copy.deepcopy(old); bad['id'] = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+        with self.assertRaises(self.m.ContinuationError): self.m.same_native(bad, new, ns)
+        # size/mtime/ctime may legitimately change (append) and stay ignored.
+        grown = copy.deepcopy(old); grown['file_identity'].update(size=9999, mtime_ns=1, ctime_ns=1)
+        self.m.same_native(grown, new, ns)
+
+    def test_D_same_native_refuses_mount_between_file_and_namespace(self):
+        old, new = self.native_pair(); ns = str(self.ns)
+        for parent in (self.sessions, self.slot, self.ns/'launcher-continuations'):
+            with self.subTest(parent=parent.name), self.unmounted(parent), self.assertRaises(self.m.ContinuationError):
+                self.m.same_native(old, new, ns)
+        with self.unmounted(self.ns), self.assertRaises(self.m.ContinuationError): self.m.same_native(old, new, ns)
+        with self.unmounted(self.ns.parent): self.m.same_native(old, new, ns)  # above the anchor: not part of the chain
+
+    def test_D_recorded_native_device_renumbered_resolves_and_resumes(self):
+        self.kernel(); self.op('NEW_PREPARE'); self.native_file(); self.op('FINALIZE', 0)
+        row = json.loads(self.record.read_bytes()); row['native_identity']['file_identity']['dev'] += 1; put(self.record, row)
+        self.assertEqual(self.m.resolve(str(self.state), str(self.profile), self.h, str(self.consumer))['status'], 'READY')
+        self.assertEqual(self.op('RESUME_ADMIT')['status'], 'IN_FLIGHT')
+        row = json.loads(self.record.read_bytes()); row['native_identity']['file_identity']['ino'] += 1; put(self.record, row)
+        with self.assertRaises(self.m.ContinuationError): self.op('FINALIZE', 0)
+
 if __name__=='__main__': unittest.main(verbosity=2)
 PYTEST
