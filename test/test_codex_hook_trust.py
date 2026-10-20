@@ -117,6 +117,35 @@ class IsolatedTrustIntegrationTests(unittest.TestCase):
                 config,key=self.build(tweak)
                 self.assertNotIn(key,config.get('hooks',{}).get('state',{}))
 
+    def test_root_identity_tolerates_device_renumbering_only(self):
+        def renumbered(source,target,record):
+            i=target.stat();(record/'root-inode').write_text(f'{i.st_dev+1} {i.st_ino}\n')
+        def other_inode(source,target,record):
+            i=target.stat();(record/'root-inode').write_text(f'{i.st_dev+1} {i.st_ino+1}\n')
+        config,key=self.build(renumbered)
+        self.assertIn(key,config.get('hooks',{}).get('state',{}),'renumbered device must keep approved hooks')
+        config,key=self.build(other_inode)
+        self.assertNotIn(key,config.get('hooks',{}).get('state',{}))
+
+    def test_root_identity_rule_unit(self):
+        spec=importlib.util.spec_from_file_location('hook_trust_identity',ROOT/'bin/codex-hook-trust.py')
+        m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+        with tempfile.TemporaryDirectory() as tmp:
+            wt=Path(tmp).resolve()/'worktrees';root=wt/'id';root.mkdir(parents=True)
+            i=root.stat()
+            self.assertTrue(m.root_identity_matches(f'{i.st_dev} {i.st_ino}',root))
+            self.assertTrue(m.root_identity_matches(f'{i.st_dev+1} {i.st_ino}',root))
+            self.assertFalse(m.root_identity_matches(f'{i.st_dev+1} {i.st_ino+1}',root))
+            self.assertFalse(m.root_identity_matches('bogus',root))
+            real=m.identity_stat
+            def other_device(path):
+                r=real(path)
+                return os.stat_result((r.st_mode,r.st_ino,r.st_dev+9,*tuple(r)[3:])) if Path(path)==root else r
+            with mock.patch.object(m,'identity_stat',other_device):
+                self.assertFalse(m.root_identity_matches(f'{i.st_dev+1} {i.st_ino}',root))
+            fresh=wt/'fresh';fresh.mkdir()
+            self.assertFalse(m.root_identity_matches(f'{i.st_dev+1} {i.st_ino}',fresh))
+
     def test_normalized_grant_digest_is_verified(self):
         def bad_digest(source,target,record):
             p=next((record.parents[1]/'hook-approvals').glob('*.json'));d=json.loads(p.read_text());d['normalized_hooks_sha256']='0'*64;p.write_text(json.dumps(d))

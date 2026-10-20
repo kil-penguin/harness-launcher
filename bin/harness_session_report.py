@@ -35,6 +35,22 @@ def check_deadline(budget):
         raise Deadline('scan_budget')
 
 
+def parent_device(root):
+    return os.lstat(Path(root).parent).st_dev
+
+
+def root_identity_matches(recorded, info, root):
+    """Recorded "<dev> <ino>" names the opened root: same inode and the same device,
+    or a whole-volume device renumbering with the root on its worktrees device."""
+    fields = recorded.split()
+    if len(fields) != 2 or not all(field.isascii() and field.isdigit() for field in fields):
+        return False
+    device, inode = int(fields[0]), int(fields[1])
+    if info.st_ino != inode:
+        return False
+    return info.st_dev == device or parent_device(root) == info.st_dev
+
+
 @contextmanager
 def directory(path, budget=None):
     """Open every component without following symlinks, including ancestors."""
@@ -404,7 +420,7 @@ def session_report(state, owner, home, now, retention, current_session, sizes, b
             with directory(root, budget) as fd:
                 info = os.fstat(fd)
                 expected = scalar(record / 'root-inode', budget)
-                if expected != f'{info.st_dev} {info.st_ino}':
+                if not root_identity_matches(expected, info, root):
                     reasons.append('root_identity_mismatch')
                 else:
                     item['root_identity'], root_ok = 'matches_recorded_inode', True

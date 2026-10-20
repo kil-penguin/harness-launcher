@@ -259,12 +259,15 @@ _harness_launcher_restore_resume_id() {
 # when more than one local history is available.
 _harness_launcher_codex_history_select() {
   local source_root="$1" mode="$2" helper py state output interactive=0
+  local -a scope
   helper="$_HARNESS_LAUNCHER_BIN/codex-history.py"
   [[ -f "$helper" && ! -L "$helper" ]] || return 1
   py="$(harness_python3_resolve 2>/dev/null)" || return 1
   state="${HARNESS_SESSION_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher}"
+  # An exact id needs only its own row; the full catalog dedupes every home.
+  [[ "$mode" =~ $_HARNESS_LAUNCHER_UUID_RE ]] && scope=(--native-id "${(L)mode}")
   output="$("$py" -I "$helper" catalog --source-root "$source_root" --state-home "$state" \
-    --legacy-state-home "${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher")" || return $?
+    --legacy-state-home "${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher" "${scope[@]}")" || return $?
   if [[ "$mode" == list ]]; then
     print -r -- "$output"
     return 0

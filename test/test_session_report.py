@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
@@ -227,6 +228,20 @@ class SessionReportTest(unittest.TestCase):
         self.assertIsNone(item['age_seconds'])
         self.assertEqual(item['lifecycle'], 'unknown')
         self.assertIn('journal_unknown', item['retained_reasons'])
+
+    def test_root_identity_tolerates_device_renumbering_only(self):
+        info = self.root.stat()
+        (self.record / 'root-inode').write_text(f'{info.st_dev + 1} {info.st_ino}\n')
+        item = self.item()
+        self.assertEqual(item['root_identity'], 'matches_recorded_inode')
+        self.assertNotIn('root_identity_mismatch', item['retained_reasons'])
+        (self.record / 'root-inode').write_text(f'{info.st_dev + 1} {info.st_ino + 1}\n')
+        self.assertIn('root_identity_mismatch', self.item()['retained_reasons'])
+        (self.record / 'root-inode').write_text(f'{info.st_dev + 1} {info.st_ino}\n')
+        module = self.module()
+        with mock.patch.object(module, 'parent_device', lambda root: info.st_dev + 7):
+            item = module.build_report(state=self.state, runtime_home=self.runtime, now=NOW, current_session=OTHER)['sessions'][0]
+        self.assertIn('root_identity_mismatch', item['retained_reasons'])
 
     def test_replaced_root_inode_mismatched_path_and_symlink_are_not_scanned(self):
         (self.record / 'root-inode').write_text('1 2\n')
