@@ -1013,6 +1013,13 @@ launch_claude() {
   else
     obs_rc=$?
     [ "$obs_rc" -eq 1 ] || return "$obs_rc"
+    # Child `claude -p` processes do not inherit --settings: discard the
+    # company OTel signals for a profile outside the usage policy.
+    local OTEL_EXPORTER_OTLP_LOGS_ENDPOINT OTEL_EXPORTER_OTLP_METRICS_ENDPOINT OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    local OTEL_EXPORTER_OTLP_LOGS_HEADERS OTEL_EXPORTER_OTLP_METRICS_HEADERS OTEL_EXPORTER_OTLP_TRACES_HEADERS
+    unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT OTEL_EXPORTER_OTLP_METRICS_ENDPOINT OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
+      OTEL_EXPORTER_OTLP_LOGS_HEADERS OTEL_EXPORTER_OTLP_METRICS_HEADERS OTEL_EXPORTER_OTLP_TRACES_HEADERS
+    harness_agent_usage_export_discard "$HARNESS_DIR" "$(harness_launch_source_root)"
   fi
   case "$CHOICE_PROVIDER" in
     kiro)
@@ -1175,6 +1182,11 @@ launch_codex() {
   fi
   export CODEX_HOME="$HARNESS_DIR/.harness/codex"
   harness_export_local_env "$HARNESS_DIR"
+  # Claude children of Codex: loopback (observed) or discard signal endpoints
+  # for a profile outside the usage policy. An inherited set (a Codex started
+  # from a personal profile's shell) is dropped first, as in launch_claude.
+  unset $HARNESS_AGENT_USAGE_DISCARD_VARS
+  harness_agent_usage_export_discard "$HARNESS_DIR" "$(harness_launch_source_root)"
 
   # The launch record's source root, resolved before any cd.
   local source_root

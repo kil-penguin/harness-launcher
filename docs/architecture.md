@@ -434,6 +434,77 @@ Preparation is idempotent. Re-running a launcher command converges generated fil
 
 When `config/codex-surface.json` is present, it is the membership boundary for generated Codex skills, imported Claude plugins, Codex-only profiles, and enabled MCP servers. Host tokens are expanded at preparation time. The generated catalog records exact source paths and hashes; it is evidence, not source.
 
+## Usage-collection policy
+
+An organization-managed usage collector can read Claude and Codex telemetry and
+transcripts. The launcher decides once, in `harness_agent_usage_policy`
+(`bin/harness-common.sh`), whether a launch may reach it. Collection is active
+only when all of these hold:
+
+1. the tracked `config/launcher.env` of the canonical source root sets
+   `HARNESS_AGENT_USAGE_COLLECT="1"`. An isolated worktree's own copy is never
+   read: the source root comes from the session record
+   (`<state>/sessions/<uuid>/source-root`), and an inherited
+   `HARNESS_SOURCE_ROOT` counts only when `HARNESS_SESSION_ROOT` is the harness
+   being prepared, so an agent cannot opt its clone in and a shell inside
+   another harness's session cannot lend it its policy;
+2. the machine-local `config/.local/agent-usage.env` of that source root does not
+   set `HARNESS_AGENT_USAGE_COLLECT=0` (any other key, value or duplicate disables
+   collection with an `invalid_config` warning);
+3. the Mac is enrolled: the managed guard directory for the current uid and its
+   parent are root-owned real directories without group/other write, and hold an
+   assertion file. Signature and expiry are not judged.
+
+Config files are parsed as data, never sourced. A trailing CR (CRLF file) is
+ignored; anything else after the value, an inline comment included, leaves the
+flag unrecognized and the profile off (fail-closed). The reason is one of `active`,
+`profile_off`, `local_off`, `invalid_config`, `no_company_device`. The guard
+directory can only be redirected when `HARNESS_AGENT_USAGE_TEST_MODE=1`.
+
+When collection is inactive:
+
+- Claude: the launcher-owned `--settings` JSON carries
+  `env.CLAUDE_CODE_ENABLE_TELEMETRY="0"` (a shell export loses to the user
+  settings file, `--settings` env wins). With local observability on it instead
+  pins the generic OTLP endpoint to the loopback collector and blanks the headers.
+  Child `claude -p` processes do not inherit `--settings`, so Claude and Codex
+  launches also export signal-specific OTLP endpoints with empty signal headers:
+  the local observability loopback collector when it is on, otherwise a discard
+  loopback port. Company headers are never exported. Every entry unsets an
+  inherited set first, so a collecting launch started from a personal shell does
+  not keep it. `checkup prompt-audit` starts Claude with its own `--settings`
+  and merges the same `env` block into it.
+- Codex: no `[otel]` table is generated beyond the local-observability profile.
+  When collection is active and local observability is off, the whitelisted keys
+  of `~/.codex/config.toml` `[otel]` are copied into the generated config (mode
+  0600, values never printed). A missing table, a parse failure or Python below
+  3.11 prints a warning instead of failing; the warm-start fast path compares a
+  hash of the copied block so a rotated key regenerates the home.
+- Raw files: every launch reconciles `~/.agent-usage/collection.d/`
+  (`bin/harness_agent_usage.py`): one manifest per isolated session
+  (`harness-launcher-<uuid>.json`; include roots with stable labels when active,
+  exclusions for the worktree's Codex home and Claude project directory when not)
+  and one exclusion manifest per non-collecting evaluated harness
+  (`harness-launcher-profile-<prefix>.json`). The policy is evaluated for the
+  registered and launched harness dirs plus every distinct source root recorded
+  in the state home, so a launch from a fresh shell (`harness-exec`, empty
+  registry) never rewrites another harness's sessions; a session whose source
+  root was not evaluated is left untouched, never defaulted to excluded. Dirs and
+  source roots outside `$HOME` are dropped; with none left the run is a no-op.
+  Profile manifests persist once written and are removed only when that harness
+  evaluates active. Several state homes share `collection.d`: the orphan sweep
+  removes a session manifest only when every path it names lies under the
+  current state home (Claude prefixes under its encoded path) and the session
+  record is still absent right before removal. Reconcile and session sync hold
+  `~/.agent-usage/.harness-launcher.lock` (0600, symlink refused, outside
+  `collection.d`), wait at most about two seconds, then skip with one warning. A
+  malformed manifest or record is skipped with a one-line warning; the rest of
+  the run, profile manifests included, continues. Writes are atomic, 0600 and skipped
+  when unchanged. When a worktree is retired, a collecting session's include
+  roots move to the same-labelled archive paths under `<state>/archives/<uuid>/codex`;
+  a personal session's exclusion is kept until no Claude transcript directory for
+  that worktree remains. Reconcile failures warn and never block a launch.
+
 ## MCP configuration
 
 Committed MCP definitions can live in `.mcp.json`. Machine-local additions can live in `.mcp.local.json` or `mcp.local.json`.

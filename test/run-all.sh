@@ -19,6 +19,13 @@ has_lockf=0
 # fixture CLAUDE_CONFIG_DIR. (A suite-wide CLAUDE_CONFIG_DIR would break tests
 # that derive ~/.claude from their fixture HOME.)
 export HARNESS_CLAUDE_PLUGIN_MIRROR=0
+# Launches reconcile ~/.agent-usage/collection.d. Suites that do not set their
+# own HOME must not write the contributor's: test mode redirects the manifest
+# directory (the agent-usage suites unset it and use their fixture HOME).
+export HARNESS_AGENT_USAGE_TEST_MODE=1
+HARNESS_AGENT_USAGE_STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/harness-agent-usage-state.XXXXXX")"
+export HARNESS_AGENT_USAGE_STATE_DIR
+trap 'rm -rf "$HARNESS_AGENT_USAGE_STATE_DIR"' EXIT
 
 mode=full
 group=

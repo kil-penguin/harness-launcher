@@ -1005,6 +1005,15 @@ _harness_launcher_is_claude_management_command() {
   harness_claude_is_management_command "$@"
 }
 
+# _harness_launcher_agent_usage_reconcile [<harness-dir>]
+#   One bounded refresh of ~/.agent-usage/collection.d per launch entry, over
+#   every registered harness plus the one being launched. Fail-open.
+_harness_launcher_agent_usage_reconcile() {
+  local -a dirs=("${_HARNESS_LAUNCHER_REGISTERED_DIRS[@]}")
+  [[ -z "${1:-}" ]] || dirs+=("${1:A}")
+  harness_agent_usage_reconcile "$_HARNESS_LAUNCHER_BIN" "${(@u)dirs}" || true
+}
+
 _harness_launcher_auto_claude() {
   _harness_launcher_auto_runtime claude "$@"
 }
@@ -1036,6 +1045,8 @@ codex() {
       # Per-harness GitHub identity: fail-open, never overrides with an empty token.
       local GH_TOKEN HARNESS_GH_USER
       harness_gh_token_load "$harness_dir" || true
+      local ${=HARNESS_AGENT_USAGE_DISCARD_VARS}
+      _harness_launcher_agent_usage_reconcile "$harness_dir"
       if harness_observability_load "$harness_dir"; then
         OTEL_RESOURCE_ATTRIBUTES="service.name=codex_exec,obs.runtime=codex,obs.profile=$HARNESS_OBSERVABILITY_PROFILE"
         export OTEL_RESOURCE_ATTRIBUTES
@@ -1043,6 +1054,10 @@ codex() {
         obs_rc=$?
         [[ "$obs_rc" -eq 1 ]] || return "$obs_rc"
       fi
+      # Claude children of Codex: loopback (observed) or discard signal
+      # endpoints for a profile outside the usage policy.
+      unset ${=HARNESS_AGENT_USAGE_DISCARD_VARS}
+      harness_agent_usage_export_discard "$harness_dir"
       harness_mcp_surface_policy_is_single_full "$mcp_surface_policy" && unset HARNESS_CODEX_MCP_PROFILE
       _harness_launcher_export_codex_runtime_env "$harness_dir" || return $?
       # This wrapper runs in the user's interactive shell and skips
@@ -1553,6 +1568,7 @@ _harness_launcher_run() {
   # skip the `always` block that finishes an isolated session.
   setopt localoptions noerrexit
   local HARNESS_DIR="$1"; shift
+  _harness_launcher_agent_usage_reconcile "$HARNESS_DIR"
   # Shell routing marks its host-default `base` for a restore; consume it here
   # so it never reaches the agent or a nested launch.
   local host_default_mode="${HARNESS_HOST_DEFAULT_MODE-}"
@@ -2079,6 +2095,7 @@ _harness_launcher_run_session() {
     # returned above; no-argument TUI selection is handled inside launcher.sh.
     local HARNESS_OBSERVABILITY_ACTIVE HARNESS_OBSERVABILITY_ENABLED HARNESS_OBSERVABILITY_PROFILE
     local HARNESS_OTLP_HTTP_ENDPOINT obs_rc
+    local ${=HARNESS_AGENT_USAGE_DISCARD_VARS}
     # Per-harness GitHub identity: fail-open, never overrides with an empty token.
     local GH_TOKEN HARNESS_GH_USER
     harness_gh_token_load "$HARNESS_DIR" || true
@@ -2108,6 +2125,10 @@ _harness_launcher_run_session() {
     else
       obs_rc=$?
       [[ "$obs_rc" -eq 1 ]] || return "$obs_rc"
+      # Child `claude -p` processes do not inherit --settings: discard the
+      # company OTel signals for a profile outside the usage policy.
+      unset ${=HARNESS_AGENT_USAGE_DISCARD_VARS}
+      harness_agent_usage_export_discard "$HARNESS_DIR" "${HARNESS_SOURCE_ROOT:-$HARNESS_DIR}"
     fi
 
     [[ -n "$session_flag" ]] && claude_args=("$session_flag" "${claude_args[@]}")
@@ -2276,11 +2297,15 @@ _harness_launcher_run_checkup() {
   harness_mode_resolve "$preset" direct || return 2
   local model="$HARNESS_MODE_MODEL" effort="$HARNESS_MODE_EFFORT"
   unset HARNESS_MODE_MODEL HARNESS_MODE_EFFORT
-  local py settings
+  local py settings agent_usage_env
   py="$(harness_python3_resolve)" || return 1
-  settings="$("$py" - "$HARNESS_DIR" "$effort" <<'PY'
+  # Company usage policy: this run starts Claude with its own --settings, so
+  # the launcher env block (telemetry off for a profile outside the policy)
+  # goes in here; ~/.claude/settings.json env would otherwise apply.
+  agent_usage_env="$(harness_agent_usage_claude_env_json "$HARNESS_DIR")"
+  settings="$("$py" - "$HARNESS_DIR" "$effort" "$agent_usage_env" <<'PY'
 import json, sys
-root, effort = sys.argv[1].rstrip("/"), sys.argv[2]
+root, effort, env = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
 private = [".claude/settings*.json", ".mcp*.json", "mcp*.local.json",
            "config/.local/**", ".harness/**"]
 settings = {"permissions": {
@@ -2292,6 +2317,8 @@ settings = {"permissions": {
 }}
 if effort in ("xhigh", "max"):
     settings["alwaysThinkingEnabled"] = True
+if env:
+    settings["env"] = json.loads(env)
 print(json.dumps(settings))
 PY
 )" || return 1
@@ -2338,6 +2365,9 @@ PY
       HARNESS_CLAUDE_TITLE_BOOTSTRAP_ID HARNESS_CLAUDE_TITLE_BOOTSTRAP_VALUE \
       HARNESS_SESSION_ID HARNESS_SESSION_ROOT HARNESS_SOURCE_ROOT HARNESS_RUN_DIR
     unset -m 'OTEL_*' 'CMUX_*' 'ORCA_*' 'HERDR_*'
+    # Children of the audit do not inherit --settings: discard signals for a
+    # profile outside the company usage policy.
+    harness_agent_usage_export_discard "$HARNESS_DIR"
     # --restricted skips project settings env; keep Glob honoring .gitignore.
     export CLAUDE_CODE_GLOB_NO_IGNORE=false CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
     umask 077
@@ -2538,6 +2568,7 @@ _harness_launcher_run_codex_cli() {
   export HARNESS_PREFIX
   local HARNESS_OBSERVABILITY_ACTIVE HARNESS_OBSERVABILITY_ENABLED HARNESS_OBSERVABILITY_PROFILE HARNESS_OTLP_HTTP_ENDPOINT
   local OTEL_RESOURCE_ATTRIBUTES obs_rc
+  local ${=HARNESS_AGENT_USAGE_DISCARD_VARS}
   # Per-harness GitHub identity: fail-open, never overrides with an empty token.
   local GH_TOKEN HARNESS_GH_USER
   harness_gh_token_load "$HARNESS_DIR" || true
@@ -2548,6 +2579,10 @@ _harness_launcher_run_codex_cli() {
     obs_rc=$?
     [[ "$obs_rc" -eq 1 ]] || return "$obs_rc"
   fi
+  # Claude children of Codex: loopback (observed) or discard signal endpoints
+  # for a profile outside the usage policy.
+  unset ${=HARNESS_AGENT_USAGE_DISCARD_VARS}
+  harness_agent_usage_export_discard "$HARNESS_DIR" "${HARNESS_SOURCE_ROOT:-$HARNESS_DIR}"
   local profile=""
   local profile_explicit=false
   local mcp_profile=""
