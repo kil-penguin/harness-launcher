@@ -392,7 +392,8 @@ _LAUNCHER_WORDS = {
     'fast', 'base', 'plan', 'opus', 'rich', 'fable', 'ultracode',
     'low', 'medium', 'high', 'xhigh', 'max', 'light', 'bypass', 'acceptEdits', 'dontAsk',
 }
-# Keywords that choose a model / an effort. ultracode chooses both (xhigh effort).
+# Keywords that choose a model / an effort. Every mode keyword also sets its own
+# effort (HARNESS_MODE_EFFORT), so it suppresses the inherited effort as well.
 _MODEL_WORDS = {'fast', 'base', 'plan', 'opus', 'rich', 'fable', 'ultracode'}
 _EFFORT_WORDS = {'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'}
 
@@ -418,7 +419,7 @@ def _request(args: list[str]) -> dict | None:
             launcher_indices.append(i)
             permission |= arg in {'bypass', 'acceptEdits', 'dontAsk'}
             model |= arg in _MODEL_WORDS
-            effort |= arg in _EFFORT_WORDS
+            effort |= arg in _EFFORT_WORDS or arg in _MODEL_WORDS
             i += 1; continue
         if arg.startswith('--fork-session='):
             raise ForkError('invalid_claude_fork_flag')

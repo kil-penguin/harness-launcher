@@ -33,7 +33,14 @@ class ClaudeForkTests(unittest.TestCase):
 
     def module(self):
         self.assertTrue((BIN / 'harness_claude_fork.py').exists(), 'explicit-fork verifier must exist')
-        return importlib.import_module('harness_claude_fork')
+        mod = importlib.import_module('harness_claude_fork')
+        if not getattr(self, '_top_level_patched', False):
+            # hermetic default: results never depend on a TTY; inheritance tests (prepare_as) patch explicitly
+            self._top_level_patched = True
+            original = mod._context.launch_top_level
+            mod._context.launch_top_level = lambda *a, **k: (False, 'test')
+            self.addCleanup(setattr, mod._context, 'launch_top_level', original)
+        return mod
 
     def prepare(self):
         prepared = self.module().prepare(self.source, self.state, NATIVE, self.home)
@@ -384,9 +391,7 @@ class ForkInheritanceTests(ClaudeForkTests):
 
     def prepare_as(self, top_level=True):
         mod = self.module()
-        original = mod._context.launch_top_level
         mod._context.launch_top_level = lambda *a, **k: (True, None) if top_level else (False, 'agent_ancestor')
-        self.addCleanup(setattr, mod._context, 'launch_top_level', original)
         return mod, self.prepare()
 
     ARGS = ['rich', 'resume', NATIVE, '--fork-session', '--', 'prompt']
@@ -485,7 +490,8 @@ class ForkInheritanceTests(ClaudeForkTests):
         out = rewritten('--model=sonnet'); self.assertNotIn('--model', out); self.assertIn('--model=sonnet', out)
         for word in ('opus', 'fast', 'base', 'rich', 'fable', 'plan'):
             out = rewritten(word)
-            self.assertNotIn('--model', out); self.assertIn('--effort', out); self.assertIn('--permission-mode', out)
+            self.assertNotIn('--model', out); self.assertNotIn('--effort', out); self.assertIn('--permission-mode', out)
+        out = rewritten('high', 'opus'); self.assertNotIn('--model', out); self.assertNotIn('--effort', out)
         for word in ('low', 'medium', 'high', 'xhigh', 'max'):
             out = rewritten(word)
             self.assertNotIn('--effort', out); self.assertIn('--model', out)
