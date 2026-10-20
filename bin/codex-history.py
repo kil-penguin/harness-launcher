@@ -449,7 +449,7 @@ def validate_provenance(args):
         if record.read_text(encoding="utf-8").strip() != str(root):
             refuse("isolated source root mismatches provenance")
         inode = record.parent/'root-inode'
-        try:valid_inode = regular(inode) and inode.read_text().strip() == root_inode(source.parent.parent)
+        try:valid_inode = regular(inode) and root_identity_matches(inode.read_text(), source.parent.parent)
         except (OSError, UnicodeError):valid_inode = False
         if not valid_inode:
             refuse('unverified Native root inode')
@@ -711,6 +711,12 @@ def catalog_value(args, keep_private=False):
             for row in rows:row.update(_store=str(state/'native-history'),_state_home=str(state))
             entries.extend(rows)
         entries.extend(snapshot_entries(state/'native-history',source))
+    # Only the requested id is deduped; held_ids and incomplete_hints above were
+    # already collected from every quarantined home, so the verdict is unchanged.
+    native_id=getattr(args,'native_id',None)
+    if native_id:
+        if not UUID.fullmatch(native_id):refuse("invalid selected native UUID")
+        entries=[row for row in entries if row['native_id'].lower()==native_id.lower()]
     rows=dedupe_entries(entries,current/'native-history',keep_private)
     for row in rows:
         if incomplete_hints or row['native_id'].lower() in held_ids:
@@ -787,7 +793,7 @@ def isolated_homes(state, source, quarantines=None):
         reason=None
         if not inode.exists() and not inode.is_symlink():reason='root_inode_missing'
         elif not regular(inode):refuse('unsafe catalog session root inode')
-        elif inode.read_text(encoding="utf-8").strip()!=root_inode(root):reason='root_inode_mismatch'
+        elif not root_identity_matches(inode.read_text(encoding="utf-8"),root):reason='root_inode_mismatch'
         if reason:
             if quarantines is None:refuse('catalog session root inode mismatch')
             quarantines.append((native,identifier,reason));continue
@@ -876,7 +882,30 @@ def snapshot_entries(store, source):
     return values
 
 
+def inventory_signature(home,children):
+    """Stat-only fingerprint of every artifact source_inventory reads or lists."""
+    rows=[]
+    def add(path):
+        info=path.lstat()
+        rows.append((path.relative_to(home).as_posix(),info.st_dev,info.st_ino,info.st_mode,info.st_size,info.st_mtime_ns,info.st_ctime_ns))
+    for path in home.iterdir():add(path)
+    for child in children:
+        if child.is_dir():
+            for path in child.rglob('*'):add(path)
+    return tuple(sorted(rows))
+
+
 def dedupe_entries(entries,store,keep_private=False):
+    cache={}
+    def inventory(home):
+        # The sha256 inventory is reused only while the stat signature is equal,
+        # so a home that changes during this call is inventoried again.
+        home=Path(home);children=source_children(home)
+        signature=inventory_signature(home,children)
+        hit=cache.get(home)
+        if hit is not None and hit[0]==signature:return hit[1]
+        value=source_inventory(home,children);cache[home]=(signature,value)
+        return value
     groups={}
     for row in entries:groups.setdefault(row['native_id'],[]).append(row)
     result=[]
@@ -889,7 +918,7 @@ def dedupe_entries(entries,store,keep_private=False):
             if parent['source_root']!=entry['source_root'] or parent['source']==owner:lineage_valid=False;continue
             original=Path(parent['source'])
             if original.exists():
-                current=[r for r in source_inventory(original,source_children(original)) if not r.get('excluded')]
+                current=[r for r in inventory(original) if not r.get('excluded')]
                 saved=[r for r in parent['source_inventory'] if not r.get('excluded')]
                 if current!=saved:lineage_valid=False;continue
             superseded.add(parent['source'])
@@ -914,7 +943,7 @@ def dedupe_entries(entries,store,keep_private=False):
             matches=[a for a in archives if a.get('_source_home')==row['home'] and a['isolation_id']==row['isolation_id']]
             for archive in sorted(matches,key=lambda a:(int(a['updated_at']),a['_capture_time']),reverse=True):
                 manifest=archive['_manifest'];home=Path(row['home'])
-                if source_inventory(home,source_children(home))==manifest['source_inventory']:
+                if inventory(home)==manifest['source_inventory']:
                     row['snapshot_id']=archive['snapshot_id'];row['origin_runtime']=archive['origin_runtime'];break
         else:
             owners={(a.get('_source_home'),a['isolation_id']) for a in archives}
@@ -959,7 +988,7 @@ def protect_pool(args):
         if expected.exists() or expected.is_symlink() or not all(regular(record/name) for name in ('source-root','session-root','root-inode','journal','lease-v1','runtime.lock')):
             refuse('Native tomb owner is unverified')
         recorded_source(record/'source-root', expected)
-        if (record/'session-root').read_text().strip()!=str(expected) or (record/'root-inode').read_text().strip()!=root_inode(tomb):refuse('Native tomb binding mismatch')
+        if (record/'session-root').read_text().strip()!=str(expected) or not root_identity_matches((record/'root-inode').read_text(),tomb):refuse('Native tomb binding mismatch')
         with runtime_lease(lock):
             if not terminal_journal(record/'journal',record):refuse('Native tomb is not terminal')
             os.rename(tomb,expected)
@@ -977,7 +1006,7 @@ def protect_pool(args):
         root = Path(root_file.read_text(encoding="utf-8").strip())
         if root != worktrees / record.name or root.is_symlink() or not root.is_dir():
             refuse("session root binding mismatch")
-        if inode.read_text(encoding="utf-8").strip() != root_inode(root):
+        if not root_identity_matches(inode.read_text(encoding="utf-8"), root):
             refuse("session root inode mismatch")
         if not terminal_journal(journal,record):
             continue
@@ -986,7 +1015,7 @@ def protect_pool(args):
         if not native_presence(native, state):
             continue
         with runtime_lease(lock):
-            if not terminal_journal(journal,record) or (record/'lease-v1').read_text()!='1\n' or inode.read_text().strip()!=root_inode(root):refuse('Native candidate changed')
+            if not terminal_journal(journal,record) or (record/'lease-v1').read_text()!='1\n' or not root_identity_matches(inode.read_text(),root):refuse('Native candidate changed')
             receipt = record / ('native-history-protect-'+uuid.uuid4().hex+'.json')
             snapshot_args = argparse.Namespace(source=str(native), catalog=str(state / "native-history"), receipt=str(receipt),
                                                source_root=owner, isolation_id=record.name, runtime_revision="legacy-unknown")
@@ -1080,6 +1109,34 @@ def root_inode(path):
     return "%s %s" % (value.st_dev, value.st_ino)
 
 
+def identity_stat(path):
+    return os.lstat(path)
+
+
+def root_identity_matches(recorded, path):
+    """The record "<dev> <ino>" still names `path`, a real directory (never followed).
+
+    The inode must match. The device must match too, except that a whole-volume
+    device renumbering (reboot) is accepted when the root sits on the device of
+    its parent (the worktrees directory); a root replaced by another filesystem
+    has a different device from its parent and is refused.
+    """
+    fields = str(recorded).split()
+    if len(fields) != 2 or not all(re.fullmatch(r"[0-9]+", field) for field in fields):
+        return False
+    device, inode = int(fields[0]), int(fields[1])
+    try:
+        path = Path(path)
+        info = identity_stat(path)
+        if not stat.S_ISDIR(info.st_mode) or info.st_ino != inode:
+            return False
+        if info.st_dev == device:
+            return True
+        return identity_stat(path.parent).st_dev == info.st_dev
+    except OSError:
+        return False
+
+
 @contextlib.contextmanager
 def runtime_lease(path):
     if not regular(path):refuse('unsafe runtime lease')
@@ -1137,6 +1194,7 @@ def parser():
     catalog_parser.add_argument("--source-root", required=True)
     catalog_parser.add_argument("--state-home", required=True)
     catalog_parser.add_argument("--legacy-state-home")
+    catalog_parser.add_argument("--native-id")
     pool = commands.add_parser("protect-pool")
     for name in ("state-home", "source-root"):
         pool.add_argument("--" + name, required=True)

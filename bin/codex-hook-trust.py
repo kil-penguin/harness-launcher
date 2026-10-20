@@ -163,6 +163,31 @@ def approved_package_command(command, grant):
     return shlex.join(tokens)
 
 
+def identity_stat(path):
+    return os.lstat(path)
+
+
+def root_identity_matches(recorded, path):
+    """Recorded "<dev> <ino>" names `path` (a real directory, never followed).
+
+    Same inode and either the same device, or a whole-volume device renumbering
+    (reboot) where the root still sits on the device of its worktrees directory.
+    A root replaced by another filesystem has a different device from its parent.
+    """
+    fields = recorded.split()
+    if len(fields) != 2 or not all(re.fullmatch(r"[0-9]+", field) for field in fields):
+        return False
+    device, inode = int(fields[0]), int(fields[1])
+    try:
+        path = Path(path)
+        info = identity_stat(path)
+        if not stat.S_ISDIR(info.st_mode) or info.st_ino != inode:
+            return False
+        return info.st_dev == device or identity_stat(path.parent).st_dev == info.st_dev
+    except OSError:
+        return False
+
+
 def broker_source(published):
     target = published.parent.parent
     sid = os.environ.get("HARNESS_SESSION_ID", "")
@@ -183,7 +208,7 @@ def broker_source(published):
         raise ValueError("session association changed")
     if os.environ.get("HARNESS_SOURCE_ROOT") != str(source):
         raise ValueError("source association changed")
-    if regular(record / "root-inode", state).decode().strip() != f"{target.stat().st_dev} {target.stat().st_ino}":
+    if not root_identity_matches(regular(record / "root-inode", state).decode(), target):
         raise ValueError("session root replaced")
     if [line for line in regular(record / "journal", state).decode().splitlines() if line.startswith("state=")] != ["state=OPEN"]:
         raise ValueError("session is not open")

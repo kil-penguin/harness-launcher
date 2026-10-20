@@ -77,6 +77,34 @@ def _open_dir(parent, name, create=False, mode=0o755):
     return _checked(os.open(name, DIRECTORY, dir_fd=parent))
 
 
+def _fstat(fd):
+    return os.fstat(fd)
+
+
+def _stat(path):
+    return os.lstat(path)
+
+
+def _verified_root_identity(recorded, target):
+    """Open the session root, check that very fd against the record, return its identity.
+
+    Same inode and either the same device or a whole-volume device renumbering
+    where the root is on the device of its worktrees directory.
+    """
+    fields = recorded.split()
+    if len(fields) != 2 or not all(field.isascii() and field.isdigit() for field in fields):
+        raise Skip("session root replaced")
+    device, inode = int(fields[0]), int(fields[1])
+    fd = _checked(os.open(target, DIRECTORY | os.O_NOFOLLOW))
+    try:
+        info = _fstat(fd)
+        if info.st_ino != inode or (info.st_dev != device and _stat(Path(target).parent).st_dev != info.st_dev):
+            raise Skip("session root replaced")
+        return info.st_dev, info.st_ino
+    finally:
+        os.close(fd)
+
+
 def _open_path(root, parts, create=False, root_identity=None):
     fd = _checked(os.open(root, DIRECTORY))
     try:
@@ -402,8 +430,8 @@ def ensure(published, trust=None):
         if published != target / ".harness/codex":
             raise Skip("not the bound session home")
         # Every later write is relative to a root fd proven to be the recorded inode.
-        recorded = trust.regular(state / "sessions" / target.name / "root-inode", state).decode().split()
-        root_identity = (int(recorded[0]), int(recorded[1]))
+        recorded = trust.regular(state / "sessions" / target.name / "root-inode", state).decode()
+        root_identity = _verified_root_identity(recorded, target)
         canonical = _allowlist(source, trust)
         wanted = [plugin_id for plugin_id in _allowlist(target, trust)
                   if plugin_id in canonical and plugin_id.split("@")[1] not in MANAGED_MARKETPLACES]

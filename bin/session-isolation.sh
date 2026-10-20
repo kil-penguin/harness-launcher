@@ -125,6 +125,23 @@ excluded_aliases() {
 ROOT_GIT_DIR="" SOURCE_GIT_DIR=""
 # root_identity <path>: device and inode of the path itself (never followed).
 root_identity() { stat -f '%d %i' "$1" 2>/dev/null || stat -c '%d %i' "$1"; }
+# root_identity_matches <recorded> <root>: the record "<dev> <ino>" still names
+# <root>. The inode must match. The device must match too, except that a
+# whole-volume device renumbering (reboot) is accepted when the root sits on
+# the device of its worktrees directory; a root replaced by a mount of another
+# filesystem has a different device from its parent and is refused.
+root_identity_matches() {
+  local recorded="$1" root="$2" current parent rdev rino cdev cino extra
+  [[ "$recorded" != *$'\n'* ]] || return 1
+  while [[ "$root" == */?* && "$root" == */ ]]; do root="${root%/}"; done
+  current="$(root_identity "$root")" || return 1
+  read -r rdev rino extra <<<"$recorded"
+  read -r cdev cino <<<"$current"
+  [[ -z "$extra" && "$rdev" =~ ^[0-9]+$ && "$rino" =~ ^[0-9]+$ && "$rino" == "$cino" ]] || return 1
+  [[ "$rdev" == "$cdev" ]] && return 0
+  parent="$(root_identity "${root%/*}")" || return 1
+  [[ "${parent%% *}" == "$cdev" ]]
+}
 # root_intact <dir> <root>: the session root is still the directory create
 # made: a real directory (not a symlink) with the inode recorded at create;
 # a record from an older launcher without it falls back to the physical
@@ -134,7 +151,7 @@ root_intact() {
   local dir="$1" root="$2"
   [[ -d "$root" && ! -L "$root" ]] || return 1
   if [[ -f "$dir/root-inode" && ! -L "$dir/root-inode" ]]; then
-    [[ "$(root_identity "$root")" == "$(<"$dir/root-inode")" ]]
+    root_identity_matches "$(<"$dir/root-inode")" "$root"
   else
     [[ "$(cd "${root%/*}" && pwd -P)/${root##*/}" == "$(cd "$root" && pwd -P)" ]]
   fi

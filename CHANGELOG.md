@@ -17,6 +17,19 @@ Notable changes are recorded here. This project follows semantic versioning for 
   Claude child processes at the loopback collector, and `checkup prompt-audit`
   carries the policy in its own `--settings`.
 
+## 0.67.0 — 2026-10-20
+
+- Make isolated-session root identity tolerant of APFS device renumbering after
+  a reboot. A recorded `root-inode` still matches when the inode is equal and the
+  root sits on the device of its `worktrees` directory; a recreated directory, a
+  different inode, a symlink, or a root on another filesystem is still refused.
+  Applies to session submit/deliver, the Codex history catalog and pool
+  protection, hook trust, native plugin inheritance and the session report.
+- Make exact-id Codex history lookups cheap: `codex-history.py catalog` accepts
+  `--native-id`, filtering before owner dedupe with an unchanged output schema;
+  each home's inventory is hashed once per call unless its stat signature
+  changes; the launcher's history selection passes `--native-id` for a UUID.
+
 ## 0.66.0 — 2026-10-19
 
 - Default new native Codex launches to Auto, following Codex configuration and
