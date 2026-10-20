@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 if 'CAPSULE_BYTES' not in globals():
-    CAPSULE_BYTES = (ROOT/'test/fixtures/omp-jq-v1-093-evidence.json').read_bytes()
+    CAPSULE_BYTES = (ROOT/'test/fixtures/omp-jq-v2-p1-evidence.json').read_bytes()
 CAPSULE = json.loads(CAPSULE_BYTES)
 if 'SOURCE_INPUTS' not in globals():
     SOURCE_INPUTS = {}

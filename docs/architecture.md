@@ -1407,13 +1407,30 @@ Both modes check whole jq bytes, all manifest bindings, a real synthetic query
 and native calls 0. A system host still strictly returns
 `REFUSED/NON_SYSTEM_JQ_REQUIRED`, exit 2; this is not a fallback PASS.
 
-CI's `test/omp-jq-ci-proof.py` checks a frozen, public-safe actual093 evidence
-capsule at `test/fixtures/omp-jq-v1-093-evidence.json` and nine whole source pins.
-Job 118160822054 at `093f664de2647f358eb24c059f991a5f16ae6956` actually
-proved non-system selection/manifest/query/native0, satisfying V1's historical
-evidence condition for the unchanged source closure. Its log/line/source digests
-are retained; private preparation paths, dependency lists and raw logs/auth are
-excluded. Source changes fail historical reuse, not silently refresh it.
+CI's `test/omp-jq-ci-proof.py` checks a frozen, public-safe P1 evidence
+capsule at `test/fixtures/omp-jq-v2-p1-evidence.json` and nine whole source pins.
+Job 118499176581 at `449e1f2776a3555f23ef41cf5f375178a494f5d5` actually
+proved non-system selection/manifest/query/native0 on `macos-14`, with ordinary
+and strict calls to the unchanged inspector and identical source pins before
+and after both calls. This satisfies the historical actual-evidence condition
+for this exact source closure. The earlier actual093 capsule remains unchanged
+as evidence for its original sources; it cannot prove the changed P1 sources.
+
+The v2 capsule pins actual job/head, whole-log and observation-line digests.
+Its `source_receipt_sha256` hashes UTF-8 JSON of `{head, source_pins}` with sorted
+keys and compact separators. This is a source receipt, not the prior capsule's
+root approval receipt. Private preparation paths, dependency lists and raw
+logs/auth are excluded from the public capsule. Source changes fail historical
+reuse, not silently refresh it.
+
+To renew evidence after a source change, use a temporary evidence-only job in
+the existing workflow on the reviewed branch. Preserve all normal CI jobs.
+Run the original ordinary and strict inspector on an actual non-system host,
+require both passes and unchanged before/after source pins, and retain the actual
+job log before creating a new frozen capsule and exact verifier pins. Never
+remove or hide system jq, replace its locator, or relabel a system refusal as a
+non-system pass. A capture job proves only that observation, not whole-CI success;
+remove the temporary job and require the normal complete CI on the final source.
 
 After pure `test/test_omp_jq_ci_proof.py`, each current CI runs the original
 inspector ordinarily then strictly, without a shell or retry. Actual system
