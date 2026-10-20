@@ -8,6 +8,8 @@ children: a supervising caller must stay alive until its native child exits.
 import fcntl
 import hashlib
 import json
+import re
+import subprocess
 import importlib
 import sys
 import types
@@ -23,6 +25,7 @@ _package = types.ModuleType(_package_name)
 _package.__path__ = [str(Path(__file__).resolve().parent)]
 sys.modules[_package_name] = _package
 _catalog = importlib.import_module(_package_name + '.harness_session_catalog')
+_context = importlib.import_module(_package_name + '.harness_launch_context')
 UUID = _catalog.UUID
 _claude_records, _provider_owners = _catalog._claude_records, _catalog._provider_owners
 
@@ -30,6 +33,10 @@ MAX_TRANSCRIPT = 256 * 1024 * 1024
 MAX_METADATA = 64 * 1024
 TERMINAL = {'CLOSED', 'DELIVERED', 'DISCARDED'}
 _ACTIVE_PREPARED = set()
+_PERMISSIONS = {'plan', 'dontAsk', 'default', 'acceptEdits', 'auto', 'bypassPermissions'}
+_MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*(\[1m\])?')
+_EFFORTS = {'low', 'medium', 'high', 'xhigh', 'max'}
+_PROBE = Path(__file__).resolve().parent / 'harness-restore-probe'
 
 
 class ForkError(ValueError):
@@ -164,7 +171,12 @@ class PreparedFork:
         self.source, self.state, self.home = source, state, home
         self.native_id, self.candidate = native_id, candidate
         self.fds, self._locks = tuple(fds), tuple(locks)
+        # Decided once: a recheck never re-evaluates the process context, it
+        # only proves the record and transcript are still the ones used.
+        self._top_level = bool(_context.launch_top_level()[0])
+        self.inherited = None
         self.receipt, self._proof = self._verify()
+        self.inherited = self._inherit()
         _ACTIVE_PREPARED.add(id(self))
 
     def _verify(self):
@@ -212,10 +224,65 @@ class PreparedFork:
         native, cwd = _transcript_meta(prefix)
         if native.lower() != self.native_id or cwd not in allowed:
             raise ForkError('fork_transcript_owner_mismatch')
+        if self._top_level:
+            proof['launch-record'] = self._record_bytes()
         receipt = dict(schema=1, runtime='claude', source_root=str(self.source), native_id=self.native_id,
                        source_owner=owner, source_status=states[0], native_home=str(self.home/'.claude'),
                        locator=str(path), locator_sha256=digest, bytes=size)
         return receipt, (proof, identity)
+
+    def _record_bytes(self):
+        """Raw origin launch record (no-follow, private), or None when absent/unsafe."""
+        try:
+            return _read(self.state / 'launch-records' / ('claude-' + self.native_id), private=True)
+        except (ForkError, OSError):
+            return None
+
+    def _inherit(self):
+        """Launch settings of the origin, only for a top-level launch and a bound record."""
+        data = self._proof[0].get('launch-record') if self._top_level else None
+        if data is None:
+            return None
+        fields = {}
+        for line in data.decode('utf-8', 'replace').split('\n'):
+            key, separator, value = line.partition('=')
+            if separator and key in ('permission', 'source_root', 'isolated', 'harness_session_id', 'context'):
+                fields[key] = value
+        owner = self.candidate['launcher_session_id']
+        try:
+            bound = (fields.get('isolated') == '1' and os.path.isabs(fields.get('source_root', ''))
+                     and os.path.realpath(fields['source_root']) == str(self.source)
+                     and UUID.fullmatch(fields.get('harness_session_id', '')) is not None
+                     and fields['harness_session_id'].lower() == owner.lower())
+        except (OSError, ValueError):
+            bound = False
+        if not bound:
+            return None
+        inherited = {'permission': fields['permission'] if fields.get('permission') in _PERMISSIONS else None,
+                     'model': None, 'effort': None}
+        model, effort = self._probe()
+        if model:
+            if fields.get('context') == '1m' and not model.endswith('[1m]'):
+                model += '[1m]'
+            inherited['model'] = model
+        inherited['effort'] = effort
+        return inherited
+
+    def _probe(self):
+        """model/effort from the digest-verified locator; recheck() refuses a changed file."""
+        model = effort = None
+        try:
+            out = subprocess.run([sys.executable, str(_PROBE), 'claude', self.receipt['locator']],
+                                 capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None, None
+        for line in out.splitlines():
+            key, separator, value = line.partition('=')
+            if key == 'model' and _MODEL.fullmatch(value) and value.startswith('claude-'):
+                model = value
+            elif key == 'effort' and value in _EFFORTS:
+                effort = value
+        return model, effort
 
     def recheck(self):
         try:
@@ -255,7 +322,7 @@ def prepare(source_root: Path, state_home: Path, native_id: str, home: Path | No
         fds.append(_lease(native_lock, create=True))
         problems = []
         owners = _provider_owners(state, source, problems, 'fork')
-        candidates = _claude_records('fork', source, home, problems, owners)
+        candidates = _claude_records('fork', source, home, problems, owners, native_id=native_id)
         if problems:
             raise ForkError('fork_catalog_incomplete')
         candidates = [item for item in candidates if item['native_id'].lower() == native_id]
@@ -325,6 +392,10 @@ _LAUNCHER_WORDS = {
     'fast', 'base', 'plan', 'opus', 'rich', 'fable', 'ultracode',
     'low', 'medium', 'high', 'xhigh', 'max', 'light', 'bypass', 'acceptEdits', 'dontAsk',
 }
+# Keywords that choose a model / an effort. Every mode keyword also sets its own
+# effort (HARNESS_MODE_EFFORT), so it suppresses the inherited effort as well.
+_MODEL_WORDS = {'fast', 'base', 'plan', 'opus', 'rich', 'fable', 'ultracode'}
+_EFFORT_WORDS = {'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'}
 
 
 def _request(args: list[str]) -> dict | None:
@@ -334,6 +405,7 @@ def _request(args: list[str]) -> dict | None:
     if args and args[0] in {'codex', 'kiro', 'kiro-cli', 'codex-gateway', 'gateway', 'checkup', 'codex-smoke'}:
         return None
     resumes = []; forks = 0; permission = False; unknown = False; conflict = False
+    model = effort = False
     launcher_indices = []; passthrough_index = None
     native = False; i = 0; end = len(args)
     while i < len(args):
@@ -346,6 +418,8 @@ def _request(args: list[str]) -> dict | None:
         if not native and arg in _LAUNCHER_WORDS:
             launcher_indices.append(i)
             permission |= arg in {'bypass', 'acceptEdits', 'dontAsk'}
+            model |= arg in _MODEL_WORDS
+            effort |= arg in _EFFORT_WORDS or arg in _MODEL_WORDS
             i += 1; continue
         if arg.startswith('--fork-session='):
             raise ForkError('invalid_claude_fork_flag')
@@ -371,6 +445,8 @@ def _request(args: list[str]) -> dict | None:
                     unknown = True
                 else: permission = True
             if option == '--session-id': conflict = True
+            model |= option == '--model'
+            effort |= option == '--effort'
             continue
         if arg in _BOOLEAN_OPTIONS:
             permission |= arg == '--dangerously-skip-permissions'
@@ -392,7 +468,8 @@ def _request(args: list[str]) -> dict | None:
         raise ForkError('unsupported_claude_resume_arguments')
     return {'native_id': value.lower(), 'fork': bool(forks), 'resume_start': start,
             'resume_stop': stop, 'options_end': end, 'permission_explicit': permission,
-            '_launcher_indices': launcher_indices, '_passthrough_index': passthrough_index}
+            '_launcher_indices': launcher_indices, '_passthrough_index': passthrough_index,
+            '_model_explicit': model, '_effort_explicit': effort}
 
 
 def request(args: list[str]) -> dict | None:
@@ -401,8 +478,12 @@ def request(args: list[str]) -> dict | None:
     return {key: value for key, value in selected.items() if not key.startswith('_')} if selected else None
 
 
-def rewrite(args: list[str], receipt: dict) -> list[str]:
-    """Send proven native controls through passthrough without keyword capture."""
+def rewrite(args: list[str], receipt: dict, inherited: dict | None = None) -> list[str]:
+    """Send proven native controls through passthrough without keyword capture.
+
+    `inherited` (PreparedFork.inherited) is given only for a top-level launch with
+    a bound origin record; explicit caller flags and keywords always win.
+    """
     selected = _request(args)
     if not selected or not selected['fork'] or receipt.get('native_id') != selected['native_id'] or receipt.get('runtime') != 'claude':
         raise ForkError('fork_request_receipt_mismatch')
@@ -413,8 +494,13 @@ def rewrite(args: list[str], receipt: dict) -> list[str]:
     native_args = []
     index = 0
     while index <= len(args):
-        if index == selected['options_end'] and not selected['permission_explicit']:
-            native_args.extend(['--permission-mode', 'default'])
+        if index == selected['options_end']:
+            if not selected['permission_explicit']:
+                native_args.extend(['--permission-mode', (inherited or {}).get('permission') or 'default'])
+            if inherited and inherited.get('model') and not selected['_model_explicit']:
+                native_args.extend(['--model', inherited['model']])
+            if inherited and inherited.get('effort') and not selected['_effort_explicit']:
+                native_args.extend(['--effort', inherited['effort']])
         if index == len(args): break
         if index == start:
             native_args.extend(['--resume', str(locator)])

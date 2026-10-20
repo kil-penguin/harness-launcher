@@ -252,6 +252,25 @@ def check_record(row):
     return row
 
 
+def origin_matches(origin, actual, namespace_path):
+    """Recorded kernel_origin vs live binding; only st_dev may differ (renumbering).
+
+    One DevMap spans the three identities. Anchors: the state root for the
+    workspace and the lock (their chains pass worktrees/ or sessions/<id>/); HOME's
+    nearest shared ancestor for the namespace. Non-dev fields, including the lock's
+    size/mtime/ctime, stay exact.
+    """
+    moved = ('workspace_identity', 'runtime_lock_identity', 'namespace_identity')
+    if {k: v for k, v in origin.items() if k not in moved} != {k: v for k, v in actual.items() if k not in moved}:
+        return False
+    devmap = p.DevMap(); state = Path(actual['state_root'])
+    return (devmap.match(origin['workspace_identity'], actual['workspace_identity'],
+                         Path(actual['workspace_root']), state) and
+            devmap.match(origin['runtime_lock_identity'], actual['runtime_lock_identity'],
+                         Path(actual['session_dir'])/'runtime.lock', state) and
+            devmap.match(origin['namespace_identity'], actual['namespace_identity'], Path(namespace_path)))
+
+
 def load_record(state, source, h, consumer):
     handle(h); state = p.physical(state); owned_directory(state)
     context = current_context(source, consumer)
@@ -270,7 +289,8 @@ def load_record(state, source, h, consumer):
     require(origin['launcher_session_id'].replace('-', '').lower() == h and
             Path(origin['session_dir']) == state/'sessions'/origin['launcher_session_id'])
     actual = binding(state, source, origin['launcher_session_id'], consumer, context)
-    require(origin == actual and row['handle'] == h, 'OMP_CONTINUATION_IDENTITY_CHANGED')
+    require(origin_matches(origin, actual, context['namespace_path']) and row['handle'] == h,
+            'OMP_CONTINUATION_IDENTITY_CHANGED')
     # Return the authoritative spelling, not a case-normalized replacement.
     path = Path(origin['session_dir'])/'omp-continuation.json'
     require(p.read_file(path, limit=LIMIT)[0] == raw)
@@ -292,7 +312,8 @@ def resolve(state, source, h, consumer):
         _, raw, row, context = load_record(state, source, h, consumer)
         require(row['status'] == 'READY', 'OMP_CONTINUATION_IN_FLIGHT_UNRESOLVED')
         same_native(row['native_identity'], inspect_native(
-            Path(context['namespace_path'])/'launcher-continuations'/h/'sessions', Path(row['kernel_origin']['workspace_root'])))
+            Path(context['namespace_path'])/'launcher-continuations'/h/'sessions', Path(row['kernel_origin']['workspace_root'])),
+            context['namespace_path'])
         return selection(row, raw, context)
     except ContinuationError: raise
     except (p.ProjectionError, OSError, ValueError, TypeError, KeyError):
@@ -368,11 +389,19 @@ def inspect_native(sessions, cwd):
         raise ContinuationError('OMP_CONTINUATION_NOT_PERSISTED') from None
 
 
-def same_native(old, new):
-    require({key: value for key, value in old.items() if key != 'file_identity'} ==
-            {key: value for key, value in new.items() if key != 'file_identity'} and
-            all(old['file_identity'][key] == new['file_identity'][key] for key in STABLE),
-            'OMP_CONTINUATION_IDENTITY_CHANGED')
+def same_native(old, new, anchor=None):
+    """Stable identity unchanged; st_dev may be renumbered only under the namespace anchor.
+
+    anchor is the namespace root: every directory from the native file up to it
+    must be on the file's current device. Without an anchor dev must be equal.
+    """
+    old_id, new_id = old['file_identity'], new['file_identity']
+    rest = lambda value: {key: item for key, item in value.items() if key != 'file_identity'}
+    stable = lambda value: {key: value[key] for key in STABLE}
+    require(rest(old) == rest(new) and (
+        stable(old_id) == stable(new_id) or
+        (anchor is not None and p.DevMap().match(stable(old_id), stable(new_id), Path(new['path']), Path(anchor)))),
+        'OMP_CONTINUATION_IDENTITY_CHANGED')
 
 
 def replace_record(path, old_raw, row):
@@ -414,14 +443,14 @@ def operate(value):
             sessions.mkdir(mode=0o700)
         elif mode == 'RESUME_ADMIT':
             require(row['status'] == 'READY', 'OMP_CONTINUATION_IN_FLIGHT_UNRESOLVED')
-            observed = inspect_native(sessions, cwd); same_native(row['native_identity'], observed)
+            observed = inspect_native(sessions, cwd); same_native(row['native_identity'], observed, context['namespace_path'])
             row.update(status='IN_FLIGHT', lifecycle_nonce=uuid.uuid4().hex, native_identity=observed,
                        last_terminal_status=None, last_admitted_context_provenance=provenance(context))
             raw = replace_record(path, raw, row)
         elif mode == 'RESOLVE':
             require(row['status'] in ('PENDING', 'IN_FLIGHT'))
             owned_directory(sessions.parent, True); owned_directory(sessions, True)
-            if row['status'] == 'IN_FLIGHT': same_native(row['native_identity'], inspect_native(sessions, cwd))
+            if row['status'] == 'IN_FLIGHT': same_native(row['native_identity'], inspect_native(sessions, cwd), context['namespace_path'])
         else:
             require(row['status'] in ('PENDING', 'IN_FLIGHT'))
             terminal = value['terminal_status']
@@ -430,7 +459,7 @@ def operate(value):
             failure = None; observed = None
             try:
                 observed = inspect_native(sessions, cwd)
-                if row['native_identity'] is not None: same_native(row['native_identity'], observed)
+                if row['native_identity'] is not None: same_native(row['native_identity'], observed, context['namespace_path'])
             except (ContinuationError, p.ProjectionError, OSError, ValueError, TypeError, KeyError) as exc:
                 failure = exc.label if isinstance(exc, ContinuationError) else 'OMP_CONTINUATION_NOT_PERSISTED'
             row.update(last_terminal_status=terminal, last_admitted_context_provenance=provenance(context))

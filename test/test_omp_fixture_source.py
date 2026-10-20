@@ -187,21 +187,23 @@ class Consumers(FixtureCase):
         self.assertIn('Ran ' + str(count) + ' tests', result.stderr)
         self.assertTrue(result.stderr.rstrip().endswith('OK'), result.stderr)
         self.assertNotIn('skipped=', result.stderr)
-        if count == 26:
+        if name == 'test-omp-continuation.sh':
             for oracle in ['test_C01_C03_C27_public_alias_layer_fake_only',
                            'test_C10_namespace_busy_no_native_or_receipt_transition',
                            'test_C11_workspace_busy_precedes_namespace_and_native',
-                           'test_C21_foreground_native_nonzero_preserved']:
+                           'test_C21_foreground_native_nonzero_preserved',
+                           'test_D_renumbered_origin_devices_are_accepted_without_rewrite',
+                           'test_D_origin_mount_at_parent_is_refused_per_field']:
                 self.assertIn(oracle, result.stderr)
 
-    def test_direct_continuation_default_runs_all_26(self):
-        self.suite('test-omp-continuation.sh', 26, False)
+    def test_direct_continuation_default_runs_all_33(self):
+        self.suite('test-omp-continuation.sh', 33, False)
 
     def test_direct_required_default_runs_all_4(self):
         self.suite('test-omp-required-loading.sh', 4, False)
 
-    def test_direct_continuation_explicit_runs_all_26(self):
-        self.suite('test-omp-continuation.sh', 26, True)
+    def test_direct_continuation_explicit_runs_all_33(self):
+        self.suite('test-omp-continuation.sh', 33, True)
 
     def test_direct_required_explicit_runs_all_4(self):
         self.suite('test-omp-required-loading.sh', 4, True)

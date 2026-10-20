@@ -840,12 +840,15 @@ system host still returns `REFUSED`, reason `NON_SYSTEM_JQ_REQUIRED`, exit 2.
 
 CI runs the pure `test/test_omp_jq_ci_proof.py` tests and the test-only
 `test/omp-jq-ci-proof.py` validator after normal dependency setup. The validator
-pins the public-safe `test/fixtures/omp-jq-v1-093-evidence.json` capsule: actual
-job 118160822054 at source `093f664de2647f358eb24c059f991a5f16ae6956`
+pins the public-safe `test/fixtures/omp-jq-v2-p1-evidence.json` capsule: actual
+job 118499176581 at source `449e1f2776a3555f23ef41cf5f375178a494f5d5`
 proved real non-system selection, complete manifest/hash binding, query exit 0
-and native calls 0. This satisfies V1's historical actual-evidence condition,
-only while the nine inspected producer/admission/policy/source pins match.
-Changed relevant source fails reuse; capsule metadata grants no authority.
+and native calls 0 with the P1 sources. Both ordinary and strict inspector calls
+passed, and all nine source pins matched before and after the calls. This
+satisfies the historical actual-evidence condition only while those nine
+producer/admission/policy/source pins match. The previous actual093 capsule
+remains as historical evidence for its original sources and is not reused for
+P1. Changed relevant source fails reuse; capsule metadata grants no authority.
 
 Every current CI invokes the unchanged inspector ordinarily, then strictly.
 A real system result must pass ordinary binding and produce the exact strict

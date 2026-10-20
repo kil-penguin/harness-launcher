@@ -114,6 +114,76 @@ def directory(path, mode=None):
     return identity(meta)
 
 
+def device(path):
+    """Stat seam: current device of one path, no-follow (tests replace this)."""
+    return os.lstat(path).st_dev
+
+
+def remap_chain(path, dev, anchor=None):
+    """True when every directory from path up to its trusted anchor is on dev.
+
+    anchor=None means HOME: the anchor is the nearest common ancestor of path
+    and the trusted HOME, and HOME's own chain up to it must be on dev too, so a
+    remapped object is on the same volume as HOME with no mount boundary between.
+    An explicit anchor (a state root, a namespace) must be an ancestor of path.
+    """
+    try:
+        path = Path(path)
+        chains = []
+        if anchor is None:
+            home = physical(Path.home())
+            anchor = Path(os.path.commonpath([str(path), str(home)]))
+            chains.append((home, anchor))
+        chains.append((path, Path(anchor)))
+        for start, top in chains:
+            start.relative_to(top)
+            for node in (start, *start.parents):
+                if device(node) != dev:
+                    return False
+                if node == top:
+                    break
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+class DevMap:
+    """Per-structure old-device to new-device mapping (APFS renumbers st_dev at reboot).
+
+    All non-dev fields must be equal. A changed dev is accepted only when it maps
+    one old device to one new device across the whole structure and the mount-free
+    chain to the trusted anchor is on the new device. Identities already on their
+    recorded device stay valid evidence of the new device, so a new device may be
+    reached by one moved old device plus unmoved identities.
+    """
+
+    def __init__(self):
+        self.moved = {}
+        self.back = {}
+        self.same = set()
+
+    def match(self, recorded, current, path, anchor=None):
+        if type(recorded) is not dict or type(current) is not dict or set(recorded) != set(current):
+            return False
+        if any(recorded[key] != current[key] for key in recorded if key != 'dev'):
+            return False
+        old, new = recorded.get('dev'), current.get('dev')
+        if type(old) is not int or type(new) is not int:
+            return False
+        if old == new:
+            if self.moved.get(old, new) != new:
+                return False
+            self.same.add(old)
+            return True
+        if old in self.same or self.moved.get(old, new) != new or self.back.get(new, old) != old:
+            return False
+        if not remap_chain(path, new, anchor):
+            return False
+        self.moved[old] = new
+        self.back[new] = old
+        return True
+
+
 def read_file(path, mode=0o600, limit=LIMIT):
     """Stable, bounded, nonblocking, no-follow read; identities are not grants."""
     p = physical(path)
@@ -170,11 +240,15 @@ def host(installation_id):
             'uid': os.getuid(), 'profile_registry_directory_identity': directory(registry_dir())}
 
 
-def check_host(value):
+def check_host(value, devmap=None):
     keys(value, 'installation_id hostname system architecture uid profile_registry_directory_identity')
     integer(value['uid'])
     check_identity(value['profile_registry_directory_identity'])
-    require(value == host(value['installation_id']), BINDING)
+    current = host(value['installation_id'])
+    key = 'profile_registry_directory_identity'
+    require({k: v for k, v in value.items() if k != key} == {k: v for k, v in current.items() if k != key}, BINDING)
+    # Anchor: HOME (the registry directory lives under ~/.config).
+    require((devmap or DevMap()).match(value[key], current[key], registry_dir()), BINDING)
 
 
 def profile_binding(name, root):
@@ -190,6 +264,27 @@ def profile_binding(name, root):
     return {'name': name, 'root': str(root), 'root_identity': root_id,
             'registry': {'path': str(path), 'sha256': digest(raw),
                          'identity': {'dev': meta[0], 'ino': meta[1], 'uid': meta[2]}}}
+
+
+def profile_matches(stored, name, root, devmap):
+    """Stored profile binding vs live; root and registry identities may be remapped."""
+    current = profile_binding(name, root)
+    def bare(v):
+        return {'name': v['name'], 'root': v['root'],
+                'registry': {k: x for k, x in v['registry'].items() if k != 'identity'}}
+    # Anchors: HOME for the registry file; the root's nearest ancestor shared with HOME.
+    return (bare(stored) == bare(current) and
+            devmap.match(stored['root_identity'], current['root_identity'], Path(current['root'])) and
+            devmap.match(stored['registry']['identity'], current['registry']['identity'],
+                         Path(current['registry']['path'])))
+
+
+def namespace_matches(stored, binary, devmap):
+    current = namespace_binding(stored['path'], binary)
+    # Anchor: the namespace's nearest ancestor shared with HOME.
+    return ({k: v for k, v in stored.items() if k != 'root_identity'} ==
+            {k: v for k, v in current.items() if k != 'root_identity'} and
+            devmap.match(stored['root_identity'], current['root_identity'], Path(current['path'])))
 
 
 def check_profile(value):
@@ -348,21 +443,22 @@ def capture_row(name, root, consumer, binary, namespace, valid_until, release,
     return row
 
 
-def validate_selected(row, name, root, consumer):
+def validate_selected(row, name, root, consumer, devmap=None):
+    devmap = DevMap() if devmap is None else devmap
     check_row(row)
     require(row['lane'] in ('BOOTSTRAP_ACTIVE', 'SSOT_ACTIVE'), 'OMP_PROJECTION_REVOKED')
     fresh(row['valid_until']); check_provenance(row['provenance'], row['lane'], row['valid_until'])
-    require(row['profile_binding'] == profile_binding(name, root), BINDING)
+    require(profile_matches(row['profile_binding'], name, root, devmap), BINDING)
     require(row['launcher'] == launcher_binding(consumer), BINDING)
     require(row['binary'] == binary_binding(row['binary']['path'], row['binary']['release']), BINDING)
-    require(row['native_home'] == namespace_binding(row['native_home']['path'], row['binary']), BINDING)
+    require(namespace_matches(row['native_home'], row['binary'], devmap), BINDING)
 
 
-def check_index(value):
+def check_index(value, devmap=None):
     keys(value, 'schema_version generation complete_enrollment_set host provenance enrolled_profiles')
     integer(value['schema_version']); require(value['schema_version'] == 1)
     integer(value['generation'], True); require(value['complete_enrollment_set'] is True)
-    check_host(value['host']); check_provenance(value['provenance'])
+    check_host(value['host'], devmap); check_provenance(value['provenance'])
     require(type(value['enrolled_profiles']) is dict)
     for name, entry in value['enrolled_profiles'].items():
         keys(entry, 'profile_binding enrollment_generation selection disposition legacy_retired payload_row_sha256 payload_generation selection_receipt')
@@ -373,10 +469,10 @@ def check_index(value):
         check_provenance(entry['selection_receipt'])
 
 
-def check_state(value, index):
+def check_state(value, index, devmap=None):
     keys(value, 'schema_version generation host profiles')
     integer(value['schema_version']); require(value['schema_version'] == 1)
-    integer(value['generation'], True); check_host(value['host'])
+    integer(value['generation'], True); check_host(value['host'], devmap)
     require(value['host'] == index['host'] and type(value['profiles']) is dict, BINDING)
     for name, row in value['profiles'].items():
         check_row(row); require(name == row['profile_binding']['name'])
@@ -385,22 +481,23 @@ def check_state(value, index):
 def select(name, root, consumer, *, continuation=False):
     """None means proven never-enrolled; every unavailable/error is a STOP."""
     try:
+        devmap = DevMap()  # one device mapping for everything compared in this selection
         directory(base(), 0o700)
         i1, identity1 = read_file(base() / 'enrollment.json')
-        index = decode(i1); check_index(index)
+        index = decode(i1); check_index(index, devmap)
         entry = index['enrolled_profiles'].get(name)
         result = None
         if entry is not None:
-            require(entry['profile_binding'] == profile_binding(name, root), BINDING)
+            require(profile_matches(entry['profile_binding'], name, root, devmap), BINDING)
             require(entry['disposition'] == 'ACTIVE', 'OMP_PROJECTION_REVOKED')
             raw, _ = read_file(base() / 'state.json')
-            state = decode(raw); check_state(state, index)
+            state = decode(raw); check_state(state, index, devmap)
             row = state['profiles'].get(name)
             require(row is not None and state['generation'] == entry['payload_generation'] and
                     digest(canonical(row)) == entry['payload_row_sha256'] and
                     row['enrollment_generation'] == entry['enrollment_generation'] and
                     row['provenance'] == entry['selection_receipt'], BINDING)
-            validate_selected(row, name, root, consumer)
+            validate_selected(row, name, root, consumer, devmap)
             result = {'HARNESS_OMP_BIN': row['binary']['path'],
                       'HARNESS_OMP_ROOT': row['native_home']['path'],
                       'HARNESS_OMP_SHA256': row['binary']['sha256']}
