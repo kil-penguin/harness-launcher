@@ -106,7 +106,7 @@ tui() { # <harness> <prefix> <input>
   [[ -f "$TMP/out" ]] || { cat "$TMP/tui.log" >&2; fail "launcher.sh stub not launched ($1)"; }
 }
 (
-  # a kh shell exported the discard set; a gd Codex launched from it collects
+  # A personal shell exported the discard set; a collecting Codex drops it.
   export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:9/v1/logs OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:9/v1/metrics
   export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:9/v1/traces OTEL_EXPORTER_OTLP_LOGS_HEADERS= OTEL_EXPORTER_OTLP_METRICS_HEADERS= OTEL_EXPORTER_OTLP_TRACES_HEADERS=
   tui "$HOME/company" comp $'2\n1\n2\n1\n1\n'
