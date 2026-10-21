@@ -629,7 +629,9 @@ permanently terminal (`resume` and `recover` refuse them).
 
 `harness-session discard <uuid>` retires an `ABANDONED` or `CONFLICT` session
 whose work will not be delivered (for example, work another session already
-delivered). It runs under the global integration lock and takes the session's
+delivered). In an unenrolled pool it runs under the global integration lock;
+an explicitly [queue-enrolled pool](session-integration-queue.md) routes it
+through the coordinator's inherited broker/pool leases. Both take the session's
 runtime lease without waiting, as garbage collection does; a held lease
 refuses. Before any state change it writes `discarded.patch` into the record:
 the binary diff of the work tree against `base-sha`, staged through a

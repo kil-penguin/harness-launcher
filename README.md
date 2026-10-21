@@ -224,6 +224,14 @@ an `ABANDONED` or `CONFLICT` session whose work will not be delivered: it keeps
 the work as `discarded.patch` in the session record, then marks it terminal
 `DISCARDED`.
 
+An operator can explicitly enable the [durable integration queue](docs/session-integration-queue.md)
+after enrolling all affected old and profile pools. Then `close --enqueue <uuid>`
+returns a persisted job identifier without waiting for tests, and `wait <job-id>`
+observes verified completion. Default `close` remains synchronous through the
+same queue; acceptance is never reported as delivery. Queue workers serialize
+the same destination and use a separate bounded host execution budget.
+No ordinary launch or close installs or starts the optional service.
+
 Only one launcher may own a UUID at a time. A kernel lease covers the complete
 runtime and is not inherited by Claude, Codex, heartbeat, or title-broker child
 processes. `CLOSED` workspaces remain resumable for 24 hours by default;

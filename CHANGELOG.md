@@ -2,6 +2,19 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## Unreleased — Durable integration queue
+
+- Add an explicitly enabled durable integration queue with immutable submissions
+  and pinned runtimes. Asynchronous acceptance and bounded client waiting are
+  separate from verified delivery; synchronous close retains its result contract.
+- Serialize queued delivery per destination across old and profile pools, with a
+  bounded host worker/test budget. Keep every enrolled legacy integration gate
+  until owned execution groups and inherited leases finish; reconcile uncertain
+  pushes against fresh remote history instead of submitting twice.
+- Route recovery, discard and retention through the same coordinator. Provide
+  job phases, timing, logs and an explicitly installed, pinned LaunchAgent;
+  ordinary launch/close commands never install or enable a background service.
+
 ## 0.71.0 — 2026-10-21
 
 - Remove pool GC from agent startup. Add bounded report-before-apply maintenance
