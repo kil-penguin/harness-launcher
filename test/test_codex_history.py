@@ -558,13 +558,13 @@ class CodexHistoryTest(unittest.TestCase):
                          "--isolation-id", identifier, "--runtime-revision", RUNTIME_REVISION, expected=2)
 
     def test_profile_catalog_finds_shared_old_owner_with_original_state_provenance(self):
-        shared=self.base.resolve()/'session-state';current=shared/'gd';uid=ISOLATION_ID
+        shared=self.base.resolve()/'session-state';current=shared/'gamma';uid=ISOLATION_ID
         root=shared/'worktrees'/uid;native=root/'.harness/codex'
         shutil.copytree(self.home,native,symlinks=True);shutil.rmtree(self.home)
         self._pool_record(shared,uid,self.source_root.resolve())
         registry=self.base/'.config/harness-launcher/profiles';registry.mkdir(parents=True)
         (self.source_root/'config').mkdir();(self.source_root/'config/launcher.env').write_text('fixture')
-        (registry/'gd').write_text(str(self.source_root)+'\n')
+        (registry/'gamma').write_text(str(self.source_root)+'\n')
         with mock.patch.dict(os.environ,HOME=str(self.base.resolve())):
             value=json.loads(self.run_history('catalog','--source-root',str(self.source_root.resolve()),
                 '--state-home',str(current),'--pool-base',str(shared)).stdout)
