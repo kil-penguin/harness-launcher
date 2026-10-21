@@ -2,6 +2,15 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## Unreleased
+
+- Allow session GC to account for untracked CPython caches after checking the
+  sibling Git source and cache fingerprint. Exact regeneration proves derived
+  bytes; serialization differences require preserving the entire original and
+  a recoverable owner/path receipt outside the retired root. Keep unsupported,
+  stale, staged, tracked or unrelated work protected. Verification never executes
+  source or loads supplied bytecode, and preservation failures retain the root.
+
 ## 0.71.0 — 2026-10-21
 
 - Remove pool GC from agent startup. Add bounded report-before-apply maintenance

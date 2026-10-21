@@ -12,6 +12,26 @@ missing state directories or update journals, leases, holds, archives, or roots.
 GC keeps the default 24-hour retention and now rechecks every retained work
 file against the base, verified delivery, or reconstructed discard patch under
 the runtime lease. Staged-only, ignored, unknown, or later changes are retained.
+The work proof makes one narrow exception for untracked CPython bytecode in
+`__pycache__`: the sibling `.py` must be Git-accounted, its contents must match,
+and the cache tag, magic, flags and timestamp/size or source hash must match.
+Source is compiled, never imported or executed; supplied bytecode is not loaded.
+If the complete cache reproduces byte for byte under the current CPython, the
+proof records `exactly_reproduced`. CPython serialization details can vary even
+for the same source. In that case stock GC, while holding the owner lease, may
+preserve the entire original in the owner's private `python-cache-archive`.
+The content-addressed bytes and a receipt with owner, source root, original
+relative path, size and hash are verified and synced before the proof records
+`preserved_original`. This proves custody, not bytecode trust. Existing entries
+are never overwritten or automatically expired; failures keep the original root.
+The archive is limited to 256 files and 64 MiB per owner. Ordinary proof calls
+only verify existing preservation; the internal `--preserve-python-caches`
+flag permits stock GC to create it. It does not authorize a GC invocation.
+Other interpreter tags, stale or damaged caches, notes, orphan bytecode,
+symlinks, and staged or modified tracked bytecode remain protected. A cache
+directory is never excluded wholesale. Retention, leases and Native history
+verification are unchanged; passing this work proof alone does not authorize
+retirement.
 This command is available after installing a release containing it;
 for source-tree tests use `bash bin/session-isolation.sh report --json`.
 
