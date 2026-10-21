@@ -344,10 +344,19 @@ echo 'PASS: harness-profile target add needs a TTY, shows the entry and diff, ta
 UP="$TMP/upstream"
 mkdir -p "$UP"
 printf 'stub-model\n' > "$UP/model"
-python3 "$ROOT/test/fixtures/responses_stub.py" "$UP" &
+UPSTREAM_LOG="$UP/responses-stub.log"
+"$PY3" "$ROOT/test/fixtures/responses_stub.py" "$UP" >"$UPSTREAM_LOG" 2>&1 &
 upstream=$!
 trap 'kill "$upstream" 2>/dev/null; rm -rf "$TMP"' EXIT
 for _ in $(seq 50); do [[ -s "$UP/port" ]] && break; sleep 0.1; done
+if [[ ! -s "$UP/port" ]]; then
+  if kill -0 "$upstream" 2>/dev/null; then
+    fail "responses stub did not publish a port within 5 seconds (pid $upstream is still alive)"
+  fi
+  wait "$upstream" || true
+  { echo 'responses stub exited before publishing a port'; sed 's/^/  | /' "$UPSTREAM_LOG"; } >&2
+  fail 'responses stub readiness failed'
+fi
 ENDPOINT="http://127.0.0.1:$(cat "$UP/port")/v1"
 KEY_FILE="$PROFILES/cliproxy-headless.key"
 (umask 077 && printf 'sk-fixture-%s\n' "$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')" > "$KEY_FILE")

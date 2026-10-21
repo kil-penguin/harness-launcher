@@ -332,11 +332,36 @@ class CliReadTest(unittest.TestCase):
 
     def test_trickle_response_cannot_extend_absolute_deadline(self):
         self.server.trickles["/api/trickle"] = (b'{"a":1}', 0.04)
-        started = time.monotonic()
         with patch.object(local, "REQUEST_DEADLINE_SECONDS", 0.1):
             with self.assertRaisesRegex(local.TransportError, "deadline_exceeded"):
                 self.client().request_json("/api/trickle")
-        self.assertLess(time.monotonic() - started, 0.2)
+
+    def test_deadline_file_does_not_rearm_after_each_read(self):
+        class Socket:
+            def __init__(self): self.values = [b"x", b"y"]
+            def recv(self, _size): return self.values.pop(0)
+
+        class RearmingDeadlineFile(local.DeadlineFile):
+            def readinto(self, buffer):
+                self.deadline = local.time.monotonic() + 5
+                return super().readinto(buffer)
+
+        def read_twice(file_type):
+            clock = [0.0]; timeouts = []
+            def selected(readable, _writable, _errors, timeout):
+                timeouts.append(timeout)
+                clock[0] = 4.0 if len(timeouts) == 1 else 6.0
+                return (readable, [], []) if timeout > 1 else ([], [], [])
+            with patch.object(local.time, "monotonic", side_effect=lambda: clock[0]), \
+                 patch.object(local.select, "select", side_effect=selected):
+                source = file_type(Socket(), 5.0)
+                first = source.readinto(bytearray(1))
+                try: second = source.readinto(bytearray(1))
+                except local.TransportError: second = None
+            return first, second, timeouts
+
+        self.assertEqual((1, None, [5.0, 1.0]), read_twice(local.DeadlineFile))
+        self.assertEqual((1, 1, [5.0, 5.0]), read_twice(RearmingDeadlineFile))
 
     def test_chunked_http_response_uses_standard_framing(self):
         self.server.chunked["/api/chunked"] = [b'{"a"', b":1}"]
