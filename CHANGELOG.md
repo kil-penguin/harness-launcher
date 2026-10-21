@@ -2,7 +2,7 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
-## Unreleased
+## Unreleased — Python cache preservation
 
 - Allow session GC to account for untracked CPython caches after checking the
   sibling Git source and cache fingerprint. Exact regeneration proves derived
