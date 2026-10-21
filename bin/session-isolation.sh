@@ -398,7 +398,7 @@ work_content_verified() {
   helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/harness_session_work_proof.py"
   [[ -f "$helper" && ! -L "$helper" ]] || return 1
   tmp="$(mktemp "$dir/.work-proof.XXXXXX")" || return 1
-  if python3 -I "$helper" --state "$(cd "$dir/../.." && pwd -P)" --owner "${dir##*/}" --retained-root "$root" > "$tmp"; then
+  if python3 -I "$helper" --state "$(cd "$dir/../.." && pwd -P)" --owner "${dir##*/}" --retained-root "$root" --preserve-python-caches > "$tmp"; then
     mv -f "$tmp" "$dir/work-proof.json"
   else
     rm -f "$tmp"; return 1

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only work-content proof, used under the GC owner's runtime lease."""
+"""Work-content proof: read-only unless stock GC opts into cache preservation."""
 import argparse
 import hashlib
+import importlib.util
+import importlib._bootstrap_external as bytecode
 import json
 import os
 from pathlib import Path
@@ -110,7 +112,131 @@ def object_hash(path,mode,algorithm):
     return result
 
 
-def prove(state,owner,retained_root=None):
+def cache_bytes(path):
+    """Read a bounded regular artifact without following or changing it."""
+    before=path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_size>16*1024*1024:
+        raise WorkError('unsupported cache or source')
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd,'rb') as incoming:
+        if stamp(os.fstat(incoming.fileno()))!=stamp(before):raise WorkError('cache input changed')
+        raw=incoming.read(16*1024*1024+1)
+        if len(raw)!=before.st_size or stamp(os.fstat(incoming.fileno()))!=stamp(before):
+            raise WorkError('cache input changed')
+    if stamp(path.lstat())!=stamp(before):raise WorkError('cache input changed')
+    return raw,before
+
+
+def preserved_cache(record,owner,source_root,relative,data,preserve):
+    """Custody, not trust: retain exact original bytes outside the retired root."""
+    descriptor=os.open(record,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    archive=None
+    try:
+        info=os.fstat(descriptor)
+        if info.st_uid!=os.getuid() or info.st_mode&0o022:raise WorkError('unsafe cache owner record')
+        if preserve:
+            try:os.mkdir('python-cache-archive',0o700,dir_fd=descriptor)
+            except FileExistsError:pass
+        archive=os.open('python-cache-archive',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=descriptor)
+        info=os.fstat(archive)
+        if info.st_uid!=os.getuid() or stat.S_IMODE(info.st_mode)!=0o700:raise WorkError('unsafe cache archive')
+        names=os.listdir(archive)
+        if len(names)>256:raise WorkError('cache archive file limit')
+        total=0
+        for name in names:
+            if not re.fullmatch(r'[0-9a-f]{64}-[0-9a-f]{64}\.(?:pyc|json)',name):raise WorkError('unknown cache archive entry')
+            entry=os.stat(name,dir_fd=archive,follow_symlinks=False)
+            if not stat.S_ISREG(entry.st_mode):raise WorkError('nonregular cache archive entry')
+            total+=entry.st_size
+        sha=hashlib.sha256(data).hexdigest();key=hashlib.sha256(relative.encode()).hexdigest()+'-'+sha
+        metadata_value={'schema':'python-cache-preservation/v1','owner':owner,'source_root':str(source_root),
+                        'relative_path':relative,'bytes':len(data),'sha256':sha}
+        encoded=(json.dumps(metadata_value,sort_keys=True,separators=(',',':'))+'\n').encode()
+        entries=((key+'.pyc',data),(key+'.json',encoded))
+        added=[content for name,content in entries if name not in names]
+        if len(names)+len(added)>256 or total+sum(map(len,added))>64*1024*1024:
+            raise WorkError('cache archive limit')
+        for name,content in entries:
+            if preserve:
+                try:
+                    fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=archive)
+                except FileExistsError:pass
+                else:
+                    with os.fdopen(fd,'wb') as outgoing:
+                        outgoing.write(content);outgoing.flush();os.fsync(outgoing.fileno())
+            fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=archive)
+            with os.fdopen(fd,'rb') as incoming:
+                info=os.fstat(incoming.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_nlink!=1
+                        or stat.S_IMODE(info.st_mode)!=0o600 or info.st_size!=len(content)):
+                    raise WorkError('unsafe preserved cache')
+                if incoming.read(len(content)+1)!=content or stamp(os.fstat(incoming.fileno()))!=stamp(info):
+                    raise WorkError('preserved cache changed')
+                if preserve:os.fsync(incoming.fileno())
+        if preserve:
+            os.fsync(archive);os.fsync(descriptor)
+        # A pinned FD must still be reachable by the durable receipt path.
+        # Otherwise a concurrent directory replacement could hide the copy.
+        for live,pinned in ((os.stat(record,follow_symlinks=False),os.fstat(descriptor)),
+                            (os.stat('python-cache-archive',dir_fd=descriptor,follow_symlinks=False),os.fstat(archive))):
+            if not stat.S_ISDIR(live.st_mode) or (live.st_dev,live.st_ino)!=(pinned.st_dev,pinned.st_ino):
+                raise WorkError('cache archive directory replaced')
+        return {'kind':'preserved_original','relative_path':relative,
+                'receipt':str(record/'python-cache-archive'/(key+'.json'))}
+    finally:
+        if archive is not None:os.close(archive)
+        os.close(descriptor)
+
+
+def derived_python_cache(root,recorded,relative,expected,algorithm,record,owner,source_root,preserve):
+    """Only exact locally reproducible bytecode is disposable; never load it."""
+    path=Path(relative)
+    if sys.implementation.name!='cpython' or path.parent.name!='__pycache__':return False
+    match=re.fullmatch(r'(.+)\.'+re.escape(sys.implementation.cache_tag)+r'(?:\.opt-([12]))?\.pyc',path.name)
+    if not match:return False
+    source_relative=str(path.parent.parent/(match[1]+'.py'))
+    source_entry=expected.get(source_relative)
+    if source_entry is None or source_entry[0] not in ('100644','100755'):return False
+    try:
+        data,cache_info=cache_bytes(root/path)
+        if cache_info.st_mode&0o111 or cache_info.st_nlink!=1 or len(data)<16:return False
+        source,source_info=cache_bytes(root/source_relative)
+        mode,oid=source_entry
+        if bool(source_info.st_mode&0o111)!=(mode=='100755'):return False
+        actual=hashlib.new(algorithm,b'blob '+str(len(source)).encode()+b'\0'+source).hexdigest()
+        if actual!=oid or data[:4]!=importlib.util.MAGIC_NUMBER:return False
+        flags=int.from_bytes(data[4:8],'little')
+        if flags==0:
+            if (int.from_bytes(data[8:12],'little')!=(int(source_info.st_mtime)&0xffffffff)
+                    or int.from_bytes(data[12:16],'little')!=(len(source)&0xffffffff)):return False
+        elif flags in (1,3):
+            if data[8:16]!=importlib.util.source_hash(source):return False
+        else:return False
+        # compile() does not execute source. Use the original filename even
+        # after GC renames the retained directory for its second work proof.
+        code=compile(source,str(recorded/source_relative),'exec',dont_inherit=True,optimize=int(match[2] or 0))
+        # Use CPython's own cache serializer, as py_compile does. A direct
+        # marshal.dumps(code) can encode different reference flags depending
+        # on the caller's references, despite compiling identical source.
+        # Newer CPython may borrow call arguments. Keep the code referenced
+        # by both the caller and a container, matching py_compile's reference
+        # flag without decoding any bytecode supplied by the session.
+        code_reference=(code,)
+        if flags==0:
+            regenerated=bytecode._code_to_timestamp_pyc(code_reference[0],int(source_info.st_mtime),len(source))
+        else:
+            regenerated=bytecode._code_to_hash_pyc(code_reference[0],importlib.util.source_hash(source),checked=bool(flags&2))
+        if data==regenerated:return {'kind':'exactly_reproduced','relative_path':relative}
+        # Marshal reference/intern flags can vary for equivalent source. Do
+        # not infer trust from a matching header: keep the complete original
+        # and a recoverable owner/path receipt before allowing retirement.
+        if data[16:17] not in (b'c',b'\xe3'):return False
+        return preserved_cache(record,owner,source_root,relative,data,preserve)
+    except (OSError,ValueError,TypeError,SyntaxError,OverflowError,RecursionError,MemoryError,AttributeError):
+        return False
+
+
+def prove(state,owner,retained_root=None,preserve_python_caches=False):
     state=Path(state)
     if not UUID.fullmatch(owner):raise WorkError('invalid owner')
     record=state/'sessions'/owner;expected_root=state/'worktrees'/owner
@@ -159,7 +285,7 @@ def prove(state,owner,retained_root=None):
                 raise WorkError('unaccounted agent index')
             indexed=index_entries(source,record/'trusted.git/index')
         if indexed!=expected:raise WorkError('unaccounted staged work')
-    observed=set();nodes=0;algorithm='sha1' if len(base)==40 else 'sha256'
+    observed=set();nodes=0;algorithm='sha1' if len(base)==40 else 'sha256';cache_proofs=[]
     def walk_error(error):raise WorkError('work inventory is inaccessible')
     for directory,dirs,files in os.walk(root,followlinks=False,onerror=walk_error):
         directory=Path(directory)
@@ -174,19 +300,26 @@ def prove(state,owner,retained_root=None):
             path=directory/name;relative=str(path.relative_to(root))
             if excluded(relative):continue
             nodes+=1
-            if nodes>100000 or relative not in expected:raise WorkError('unaccounted work file')
+            if nodes>100000:raise WorkError('work inventory limit')
+            if relative not in expected:
+                cache=derived_python_cache(root,recorded,relative,expected,algorithm,record,owner,source,preserve_python_caches)
+                if cache:
+                    cache_proofs.append(cache);continue
+                raise WorkError('unaccounted work file')
             mode,oid=expected[relative]
             if object_hash(path,mode,algorithm)!=oid:raise WorkError('unaccounted work content')
             observed.add(relative)
     if observed!=set(expected) or root.lstat().st_ino!=info.st_ino:raise WorkError('work tree changed')
-    return {'status':'proven','session_id':owner,'lifecycle':status,'files':len(observed)}
+    return {'status':'proven','session_id':owner,'lifecycle':status,'files':len(observed),
+            'python_cache_proofs':cache_proofs}
 
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--state',type=Path,required=True)
     parser.add_argument('--owner',required=True);parser.add_argument('--retained-root',type=Path)
+    parser.add_argument('--preserve-python-caches',action='store_true',help='GC lease only: preserve nonreproduced cache originals')
     args=parser.parse_args()
-    try:result=prove(args.state,args.owner,args.retained_root)
+    try:result=prove(args.state,args.owner,args.retained_root,args.preserve_python_caches)
     except (OSError,ValueError,subprocess.SubprocessError,UnicodeError):
         print(json.dumps({'status':'retained','reason':'work_content_unverified','session_id':args.owner}));return 2
     print(json.dumps(result));return 0

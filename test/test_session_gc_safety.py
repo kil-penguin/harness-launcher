@@ -2,8 +2,10 @@
 import json
 import fcntl
 import os
+import py_compile
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -15,11 +17,14 @@ class GCSafetyTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.base=Path(self.tmp.name).resolve();self.source=self.base/'source';self.source.mkdir()
+        fixture_bin=self.base/'bin';fixture_bin.mkdir();(fixture_bin/'python3').symlink_to(sys.executable)
         self.state=self.base/'state';self.env=dict(os.environ,HARNESS_SESSION_STATE_HOME=str(self.state),
-                                                  HARNESS_SESSION_RETENTION_SECONDS='0',HARNESS_AGENT_USAGE_TEST_MODE='1')
+                                                  HARNESS_SESSION_RETENTION_SECONDS='0',HARNESS_AGENT_USAGE_TEST_MODE='1',
+                                                  PATH=str(fixture_bin)+os.pathsep+os.environ['PATH'])
         for args in [('init','-q','-b','main'),('config','user.name','Fixture'),('config','user.email','qa@example.invalid')]:
             subprocess.run(['git','-C',str(self.source),*args],check=True)
         (self.source/'tracked').write_text('fixture\n')
+        (self.source/'module.py').write_text('VALUE = 1\n')
         subprocess.run(['git','-C',str(self.source),'add','.'],check=True)
         subprocess.run(['git','-C',str(self.source),'commit','-qm','fixture'],check=True)
 
@@ -39,6 +44,36 @@ class GCSafetyTests(unittest.TestCase):
         self.engine('gc','--owner',owner,'--source-root',str(self.source))
         self.assertFalse(root.exists());self.assertTrue(other_root.exists())
         self.assertTrue((self.state/'archives'/owner/'manifest.json').is_file())
+
+    def test_targeted_gc_accepts_derived_bytecode_and_preserves_other_owner(self):
+        owner,root=self.closed();other,other_root=self.closed()
+        py_compile.compile(str(root/'module.py'),doraise=True)
+        self.engine('gc','--owner',owner,'--source-root',str(self.source))
+        self.assertFalse(root.exists());self.assertTrue(other_root.is_dir())
+        self.assertTrue((self.state/'archives'/owner/'manifest.json').is_file())
+
+    def test_targeted_gc_retains_modified_source_even_with_fresh_bytecode(self):
+        owner,root=self.closed();(root/'module.py').write_text('VALUE = 2\n')
+        cache=Path(py_compile.compile(str(root/'module.py'),doraise=True))
+        self.engine('gc','--owner',owner,'--source-root',str(self.source))
+        self.assertEqual((root/'module.py').read_text(),'VALUE = 2\n');self.assertTrue(cache.is_file())
+
+    def test_gc_preserves_nonreproduced_cache_bytes_outside_the_retired_root(self):
+        owner,root=self.closed();cache=Path(py_compile.compile(str(root/'module.py'),doraise=True))
+        original=cache.read_bytes()+b'original cache tail';relative=str(cache.relative_to(root));cache.write_bytes(original)
+        self.engine('gc','--owner',owner,'--source-root',str(self.source))
+        self.assertFalse(root.exists())
+        archive=self.state/'sessions'/owner/'python-cache-archive';receipt=next(archive.glob('*.json'))
+        self.assertEqual(json.loads(receipt.read_text())['relative_path'],relative)
+        self.assertEqual(receipt.with_suffix('.pyc').read_bytes(),original)
+
+    def test_gc_refuses_redirected_cache_archive_without_removing_the_root(self):
+        owner,root=self.closed();cache=Path(py_compile.compile(str(root/'module.py'),doraise=True))
+        cache.write_bytes(cache.read_bytes()+b'original cache tail')
+        outside=self.base/'outside';outside.mkdir()
+        (self.state/'sessions'/owner/'python-cache-archive').symlink_to(outside,target_is_directory=True)
+        self.engine('gc','--owner',owner,'--source-root',str(self.source))
+        self.assertTrue(root.is_dir());self.assertTrue(cache.is_file());self.assertEqual(list(outside.iterdir()),[])
 
     def test_existing_absolute_state_alias_keeps_its_recorded_spelling(self):
         # macOS TemporaryDirectory spells /var while pwd -P spells /private/var.
