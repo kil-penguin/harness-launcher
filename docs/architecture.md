@@ -881,6 +881,13 @@ options behaves exactly as before.
       has open is never readable, writable or ioctl-able (Codex's own policy
       also allows ioctl on any slave; this one does not).
     - Read and exec of exactly the code-mode host beside the binary.
+    - Read-only data access to exactly `/private/etc/codex/requirements.toml`,
+      the canonical macOS system requirements path. Every component is checked
+      with `lstat`: directories and the single-link regular file must be
+      root-owned and not group/world writable. Symlinks, special files and
+      unexpected metadata errors refuse the run; normal absence adds no grant.
+      The policy is neither copied nor changed. Sibling files stay unreadable,
+      and explicit write/exec denies protect the policy even on a broad `PATH`.
     - Network: TCP to exactly `localhost:<forwarder port>`. Seatbelt only
       accepts `*` or `localhost` as a host, so loopback at that one port is
       the narrowest rule it can express; no other port, no `localhost:*`.
@@ -901,9 +908,10 @@ options behaves exactly as before.
     no Codex binary; a key file that fails the checks above; a forwarder that
     does not start; `GET /v1/models` through the forwarder not answering 200;
     `sandbox-exec -f <profile> <codex> --version` or
-    `codex-code-mode-host --help` under the profile failing; and the key file
+    `codex-code-mode-host --help` or `codex features list` under the profile
+    failing; and the key file
     being readable inside the sandbox (`/bin/cat` under the profile). The last
-    two run after the session clone exists, so that session is finished
+    checks run after the session clone exists, so that session is finished
     (`CLOSED`) on refusal.
   - *Signals.* `SIGTERM`, `SIGINT` and `SIGHUP` kill the process group and
     then every process left under the session root or temp directory (one

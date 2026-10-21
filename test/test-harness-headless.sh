@@ -1134,6 +1134,7 @@ cat > "$TMP/vendor/codex" <<'EOF'
 # Fake codex: answers --version; for `exec`, reports what it was given on
 # stderr (the run log) and then acts on MODE=<mode> from the prompt.
 [[ "${1:-}" != --version ]] || { echo 'codex-cli 0.0.0-fake'; exit 0; }
+[[ "$*" != 'features list' ]] || exit 0
 [[ "${1:-}" == exec ]] || exit 64
 args=("$@") out=""
 for ((i = 0; i < ${#args[@]}; i++)); do [[ "${args[i]}" != -o ]] || out="${args[i+1]}"; done

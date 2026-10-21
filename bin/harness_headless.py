@@ -915,6 +915,12 @@ def codex_preflight(profile, exe, host, key_file, env, root):
     if helped.returncode != 0:
         raise Refused(f'{CODE_MODE_HOST} does not start under the agent sandbox (exit {helped.returncode}): '
                       f'{helped.stderr.strip()[-300:]}')
+    # --version does not load configuration. Check the exact execution profile
+    # and environment without spending a model request on an unusable CLI.
+    bootstrap = sandboxed(exe, 'features', 'list', stdout=subprocess.DEVNULL)
+    if bootstrap.returncode != 0:
+        raise Refused(f'codex configuration does not load under the agent sandbox (exit {bootstrap.returncode}): '
+                      f'{bootstrap.stderr.strip()[-300:]}')
     if sandboxed('/bin/cat', os.path.realpath(key_file), stdout=subprocess.DEVNULL).returncode == 0:
         raise Refused('--endpoint-key-file is readable inside the agent sandbox; keep it under ~/.config/harness-launcher')
 

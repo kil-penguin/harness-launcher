@@ -1044,6 +1044,18 @@ codex_sandbox_profile() {
   [[ "$port" =~ ^[0-9]{1,5}$ ]] || { echo 'harness-session: invalid forwarder port' >&2; return 2; }
   root="$(phys "$1")"; tmp="$(phys "$2")"; home="$(phys "$3")"; codex_home="$(phys "$7")"
   verifier_sandbox_profile "$1" "$2" "$3" "$source" "$exe" || return
+  # Codex bootstraps the system requirements even with an isolated CODEX_HOME.
+  # Grant data read of that trusted file only, before the final credential denies.
+  local policy_script="${BASH_SOURCE[0]}" policy_dir policy_hop
+  for policy_hop in {1..40}; do
+    [[ -L "$policy_script" ]] || break
+    policy_dir="$(cd "$(dirname "$policy_script")" && pwd -P)" || return
+    policy_script="$(readlink "$policy_script")" || return
+    [[ "$policy_script" == /* ]] || policy_script="$policy_dir/$policy_script"
+  done
+  [[ -f "$policy_script" && ! -L "$policy_script" ]] || return 2
+  policy_dir="$(cd "$(dirname "$policy_script")" && pwd -P)" || return
+  python3 -I -B "$policy_dir/harness_codex_policy.py" || return
   # PTYs as Codex's own Seatbelt policy grants them: openpty(), and a slave
   # tty only with the sandbox extension the kernel issues for a PTY opened
   # inside the sandbox, never a terminal opened outside it.

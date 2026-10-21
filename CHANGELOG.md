@@ -2,6 +2,14 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## Unreleased — Managed Codex policy
+
+- Allow read-only access to the fixed, trusted macOS system Codex requirements
+  file in headless agent sandboxes, preserving administrator policy without
+  granting sibling-file access or writes. Refuse unsafe file metadata.
+- Bootstrap Codex configuration during sandbox preflight so configuration
+  failures are reported before model requests, even when `--version` succeeds.
+
 ## 0.71.0 — 2026-10-21
 
 - Remove pool GC from agent startup. Add bounded report-before-apply maintenance

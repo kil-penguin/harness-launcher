@@ -438,6 +438,11 @@ harness-headless <profile> --agent codex --model gpt-6.1-sol --effort medium \
   --lock-file run.lock --budget-usd 5 --timeout-min 30
 ```
 
+Codex preflight loads its configuration under the same sandbox before any model
+request. The fixed macOS system requirements file is readable only when it and
+all parent directories are root-owned and not writable by other users; its
+siblings and writes remain denied. Missing system requirements need no grant.
+
 `--target <name>` (Codex only) runs the same Codex agent on a registered personal code repository instead of the harness and delivers a successful change as a draft pull request on a new `loop/<task>-<approval8>` branch. The owner registers each repository once from a terminal; the caller passes the sha256 of that record, so a changed registry entry is refused until it is registered again:
 
 ```bash
