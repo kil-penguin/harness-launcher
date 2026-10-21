@@ -8,6 +8,35 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OB
 
 state_home() { printf '%s\n' "${HARNESS_SESSION_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher}"; }
 session_dir() { printf '%s/sessions/%s\n' "$(state_home)" "$1"; }
+integration_queue_enabled() { [[ -e "$(state_home)/integration-queue.json" || -L "$(state_home)/integration-queue.json" ]]; }
+# Homebrew exposes this script through a bin symlink; helpers live beside its target.
+integration_queue() {
+  local script="${BASH_SOURCE[0]}" directory hop
+  for hop in {1..40}; do
+    directory="$(cd -P -- "$(dirname -- "$script")" && pwd -P)" || return 2
+    script="$directory/$(basename -- "$script")"
+    [[ -L "$script" ]] || break
+    script="$(readlink "$script")" || return 2
+    [[ "$script" == /* ]] || script="$directory/$script"
+  done
+  [[ -f "$script" && ! -L "$script" && -f "$directory/harness_integration_queue.py" ]] || return 2
+  # A guardian must replace its background shell: that shell waiting for its
+  # child would otherwise keep the execution group alive forever after a crash.
+  if [[ "${1:-}" == guardian ]]; then
+    exec python3 -I -B "$directory/harness_integration_queue.py" --state "$(state_home)" --engine "$script" "$@"
+  fi
+  python3 -I -B "$directory/harness_integration_queue.py" --state "$(state_home)" --engine "$script" "$@"
+}
+integration_headless() { [[ -e "${INTEGRATION_INPUT_DIR:-$(session_dir "$1")}/headless" ]]; }
+integration_phase() {
+  [[ -n "${INTEGRATION_INPUT_DIR:-}" ]] || return 0
+  integration_queue phase "$1" --home "${HARNESS_INTEGRATION_HOME:?}"
+}
+verifier_exec() {
+  if [[ -n "${INTEGRATION_INPUT_DIR:-}" ]]; then
+    integration_queue verifier-exec --home "${HARNESS_INTEGRATION_HOME:?}" -- "$@"
+  else "$@"; fi
+}
 new_id() { uuidgen 2>/dev/null || { date +%s%N; } | shasum -a 256 | cut -c1-32; }
 write_journal() {
   local dir="$1" state="$2" identity="$3" tmp
@@ -612,7 +641,13 @@ gc_unlocked() {
   done
   printf 'harness-session gc: scanned=%s retired=%s retained=%s elapsed_seconds=%s\n' "$scanned" "$retired" "$retained" "$(( $(date -u +%s) - started ))" >&2
 }
-gc_sessions() { with_lock gc_unlocked; }
+gc_sessions() {
+  if integration_queue_enabled; then
+    local retention="${HARNESS_SESSION_RETENTION_SECONDS:-86400}"
+    [[ "$retention" != archive ]] || retention=86400
+    integration_queue control gc --wait --retention "$retention" --filter-owner "${HARNESS_GC_OWNER_FILTER:-}" --filter-source "${HARNESS_GC_SOURCE_FILTER:-}"
+  else with_lock gc_unlocked; fi
+}
 resume_session() {
   local source="$1" id="$2" dir recorded root state lock worktrees expected
   valid_id "$id" || { echo "cannot resume $id: invalid session UUID" >&2; return 2; }
@@ -779,8 +814,10 @@ recover_unlocked() {
           [[ "$actual_mode" == "$mode" && "$actual_oid" == "$hash" ]] || { rm -rf "$readback"; transition "$id" CONFLICT "$(field "$dir/journal" identity)"; return 4; }
         done < "$dir/.candidate-manifest"
         printf '%s\n' "$pending" > "$dir/delivered-sha"
-        mv -f "$dir/.candidate-manifest" "$dir/delivered-manifest"
+        cp -p "$dir/.candidate-manifest" "$dir/delivered-manifest"
+        fsync_paths "$dir/delivered-sha" "$dir/delivered-manifest" "$dir" || return 4
         rm -rf "$readback"; transition "$id" DELIVERED "$(field "$dir/journal" identity)"
+        fsync_paths "$dir/journal" "$dir" || return 4
         printf 'HARNESS_SESSION_ROOT=%s\nstate=DELIVERED\n' "$(<"$dir/session-root")"
         return 0
       fi
@@ -794,7 +831,10 @@ recover_unlocked() {
   reopen_session "$id"
   printf 'HARNESS_SESSION_ROOT=%s\nstate=OPEN\n' "$(<"$dir/session-root")"
 }
-recover() { with_lock recover_unlocked "$1"; }
+recover() {
+  if integration_queue_enabled; then integration_queue control recover "$1" --wait
+  else with_lock recover_unlocked "$1"; fi
+}
 heartbeat_epoch() { date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null || printf '0\n'; }
 heartbeat_session() {
   local dir="$(session_dir "$1")" state
@@ -901,6 +941,10 @@ write_candidate_manifest() {
 }
 verify_submission_identity() {
   local dir="$1" expected
+  if [[ -n "${INTEGRATION_INPUT_DIR:-}" ]]; then
+    integration_queue authorize integrate "${dir##*/}" --home "${HARNESS_INTEGRATION_HOME:?}" >/dev/null
+    return
+  fi
   expected="$(field "$dir/journal" identity)"
   [[ -n "$expected" && "$(submission_identity "$dir")" == "$expected" ]]
 }
@@ -1085,17 +1129,18 @@ run_repository_verifier() {
   verifier="$trusted/core/bin/auto-deliver.sh"
   [[ -f "$verifier" ]] || { echo 'ERROR: repository-owned core/bin/auto-deliver.sh verifier is required' >&2; rm -rf "$trusted"; return 2; }
   verifier_args=("verify isolated session $id" --staged-only --dry-run --no-push)
-  if [[ -e "$(session_dir "$id")/headless" ]]; then
+  if integration_headless "$id"; then
     run_sandboxed_verifier "$candidate" "$id" "$trusted" "$verifier" "${verifier_args[@]}"
     return
   fi
-  help_output="$(bash "$verifier" --help 2>/dev/null || true)"
+  help_output="$(verifier_exec bash "$verifier" --help 2>/dev/null || true)"
   if grep -q -- '--contract-checked' <<< "$help_output"; then
     verifier_args+=(--contract-checked 'broker candidate cascade verified')
   fi
   local rc=0
-  (unset HARNESS_SESSION_ID HARNESS_SOURCE_ROOT HARNESS_SESSION_ROOT HARNESS_RUN_DIR HARNESS_SESSION_STATE_HOME; cd "$candidate" && TEST_HARNESS_DIR="$candidate" HARNESS_POST_COMMIT_PUSH=0 HARNESS_POST_COMMIT_CODEX_SYNC=0 HARNESS_RAG_ENABLED=0 HARNESS_SESSION_BACKLINK=0 \
-    bash "$verifier" "${verifier_args[@]}") || rc=$?
+  (if [[ -z "${INTEGRATION_INPUT_DIR:-}" ]]; then unset HARNESS_SESSION_ID HARNESS_SOURCE_ROOT HARNESS_SESSION_ROOT HARNESS_RUN_DIR HARNESS_SESSION_STATE_HOME; fi
+    cd "$candidate" && TEST_HARNESS_DIR="$candidate" HARNESS_POST_COMMIT_PUSH=0 HARNESS_POST_COMMIT_CODEX_SYNC=0 HARNESS_RAG_ENABLED=0 HARNESS_SESSION_BACKLINK=0 \
+    verifier_exec bash "$verifier" "${verifier_args[@]}") || rc=$?
   rm -rf "$trusted"
   return "$rc"
 }
@@ -1137,13 +1182,17 @@ run_sandboxed_verifier() {
       && profile="$(verifier_sandbox_profile "$vcopy" "$vtmp" "${HOME:?}" "$source" "$trusted")"; } \
     || { rm -rf "$trusted" "$vtmp" "$vcopy"; return 2; }
   venv=(HOME="$HOME" PATH="${PATH:-/usr/bin:/bin}" TMPDIR="$vtmp" GIT_CONFIG_GLOBAL="$vtmp/gitconfig")
+  if [[ -n "${INTEGRATION_INPUT_DIR:-}" ]]; then
+    [[ "${HARNESS_DELIVER_TEST_JOBS:-}" =~ ^([1-9]|1[0-6])$ ]] || return 2
+    venv+=(HARNESS_DELIVER_TEST_JOBS="$HARNESS_DELIVER_TEST_JOBS" HARNESS_TEST_CASE_JOBS_LIMIT="$HARNESS_DELIVER_TEST_JOBS")
+  fi
   [[ -z "${LANG:-}" ]] || venv+=(LANG="$LANG")
   for name in $(compgen -e); do [[ "$name" != LC_* ]] || venv+=("$name=${!name}"); done
-  help_output="$(cd "$vcopy" && env -i "${venv[@]}" "$SANDBOX_EXEC" -p "$profile" bash "$verifier" --help 2>/dev/null || true)"
+  help_output="$(cd "$vcopy" && verifier_exec env -i "${venv[@]}" "$SANDBOX_EXEC" -p "$profile" bash "$verifier" --help 2>/dev/null || true)"
   if grep -q -- '--contract-checked' <<< "$help_output"; then
     args+=(--contract-checked 'broker candidate cascade verified')
   fi
-  (cd "$vcopy" && env -i "${venv[@]}" TEST_HARNESS_DIR="$vcopy" HARNESS_POST_COMMIT_PUSH=0 HARNESS_POST_COMMIT_CODEX_SYNC=0 \
+  (cd "$vcopy" && verifier_exec env -i "${venv[@]}" TEST_HARNESS_DIR="$vcopy" HARNESS_POST_COMMIT_PUSH=0 HARNESS_POST_COMMIT_CODEX_SYNC=0 \
     HARNESS_RAG_ENABLED=0 HARNESS_SESSION_BACKLINK=0 "$SANDBOX_EXEC" -p "$profile" bash "$verifier" "${args[@]}") || rc=$?
   rm -rf "$trusted" "$vtmp" "$vcopy"
   return "$rc"
@@ -1164,25 +1213,28 @@ write_index_pathset() {
   done < <(git -C "$repo" diff --cached --name-status --no-renames -z "$base")
 }
 integrate_unlocked() {
-  local id="$1" dir source remote attempt candidate current delivered readback kind mode hash path actual_mode actual_type actual_oid actual_path entry
+  local id="$1" dir input source remote attempt candidate current delivered readback kind mode hash path actual_mode actual_type actual_oid actual_path entry
   dir="$(session_dir "$id")"; source="$(<"$dir/source-root")"
+  input="${INTEGRATION_INPUT_DIR:-$dir}"
   remote="$(git -C "$source" remote get-url origin)"
   [[ "$remote" == "$(<"$dir/remote-url")" ]] || { transition "$id" INTEGRATING "$(field "$dir/journal" identity)"; transition "$id" CONFLICT "$(field "$dir/journal" identity)"; return 2; }
   transition "$id" INTEGRATING "$(field "$dir/journal" identity)"
   verify_submission_identity "$dir" || { transition "$id" CONFLICT "$(field "$dir/journal" identity)"; return 2; }
   for attempt in 1 2; do
+    integration_phase preparing || return $?
     candidate="$(mktemp -d "$(state_home)/candidate.XXXXXX")"
     git clone -q "$remote" "$candidate"
     git -C "$candidate" checkout -q main
     current="$(git -C "$candidate" rev-parse HEAD)"
-    if ! git -C "$candidate" apply --3way --index "$dir/submission.patch"; then rm -rf "$candidate"; transition "$id" CONFLICT; return 3; fi
-    write_manifest_pathset "$dir/manifest" "$dir/.submitted-pathset"
+    if ! git -C "$candidate" apply --3way --index "$input/submission.patch"; then rm -rf "$candidate"; transition "$id" CONFLICT; return 3; fi
+    write_manifest_pathset "$input/manifest" "$dir/.submitted-pathset"
     write_index_pathset "$candidate" "$current" "$dir/.candidate-pathset"
     cmp -s "$dir/.submitted-pathset" "$dir/.candidate-pathset" || { rm -rf "$candidate"; transition "$id" CONFLICT "$(field "$dir/journal" identity)"; return 3; }
+    integration_phase verifying || return $?
     run_repository_verifier "$candidate" "$id" "$remote" "$current" || {
       rm -rf "$candidate"; transition "$id" CONFLICT "$(field "$dir/journal" identity)"
       # Headless: exit 9, the verifier rejected the candidate (not a merge conflict).
-      if [[ -e "$dir/headless" ]]; then return 9; fi
+      if integration_headless "$id"; then return 9; fi
       return 3
     }
     verify_submission_identity "$dir" || { rm -rf "$candidate"; transition "$id" CONFLICT "$(field "$dir/journal" identity)"; return 2; }
@@ -1190,11 +1242,11 @@ integrate_unlocked() {
     # Headless: no hooks, fsmonitor or external drivers on the broker's own
     # commit and push (the verifier never touched this dir; belt and braces).
     local -a cgit=(git)
-    [[ ! -e "$dir/headless" ]] || cgit=(session_git)
+    if integration_headless "$id"; then cgit=(session_git); fi
     local message="" text="" rc=0
     local -a cmsg=(-m "harness session $id")
     # A launcher-written message (headless runs) plus the session trailer.
-    if [[ -f "$dir/commit-message" && ! -L "$dir/commit-message" ]] && text="$(<"$dir/commit-message")" && [[ -n "$text" ]] \
+    if [[ -f "$input/commit-message" && ! -L "$input/commit-message" ]] && text="$(<"$input/commit-message")" && [[ -n "$text" ]] \
         && message="$(mktemp "$(state_home)/commit-message.XXXXXX")"; then
       printf '%s\n\nHarness-Session: %s\n' "$text" "$id" > "$message" && cmsg=(--cleanup=whitespace -F "$message")
     fi
@@ -1202,10 +1254,14 @@ integrate_unlocked() {
     [[ -z "$message" ]] || rm -f "$message"
     [[ "$rc" == 0 ]] || { rm -rf "$candidate"; return "$rc"; }
     delivered="$(git -C "$candidate" rev-parse HEAD)"
-    write_candidate_manifest "$candidate" "$delivered" "$dir/manifest" "$dir/.candidate-manifest" || { rm -rf "$candidate"; transition "$id" CONFLICT "$(field "$dir/journal" identity)"; return 2; }
+    write_candidate_manifest "$candidate" "$delivered" "$input/manifest" "$dir/.candidate-manifest" || { rm -rf "$candidate"; transition "$id" CONFLICT "$(field "$dir/journal" identity)"; return 2; }
     printf '%s\n' "$delivered" > "$dir/pending-sha"
+    # Durable write-ahead proof must precede any remote side effect. A queue
+    # publishing receipt without this evidence remains indeterminate on reboot.
+    fsync_paths "$dir/.candidate-manifest" "$dir/pending-sha" "$dir/journal" "$dir" || return 4
     git -C "$candidate" fetch -q origin main
     [[ "$(git -C "$candidate" rev-parse origin/main)" == "$current" ]] || { rm -rf "$candidate"; continue; }
+    integration_phase publishing || return $?
     if "${cgit[@]}" -C "$candidate" push -q origin HEAD:refs/heads/main; then
       [[ "${HARNESS_SESSION_TEST_CRASH_BEFORE_ACK:-0}" == 1 ]] && kill -9 "$BASHPID"
       printf '%s\n' "$delivered" > "$dir/push-ack"
@@ -1216,6 +1272,7 @@ integrate_unlocked() {
       # pending commit from fresh remote history without resubmitting it.
       [[ "${HARNESS_SESSION_TEST_READBACK_FAIL:-0}" == 1 ]] && { rm -rf "$candidate"; return 4; }
       readback="$(mktemp -d "$(state_home)/readback.XXXXXX")"
+      integration_phase readback || return $?
       git clone -q "$remote" "$readback"
       git -C "$readback" merge-base --is-ancestor "$delivered" HEAD || { rm -rf "$candidate" "$readback"; transition "$id" CONFLICT "$(field "$dir/journal" identity)"; return 4; }
       while IFS= read -r -d '' kind && IFS= read -r -d '' mode && IFS= read -r -d '' hash && IFS= read -r -d '' path; do
@@ -1224,18 +1281,36 @@ integrate_unlocked() {
         [[ "$actual_mode" == "$mode" && "$actual_oid" == "$hash" ]] || { rm -rf "$candidate" "$readback"; transition "$id" CONFLICT "$(field "$dir/journal" identity)"; return 4; }
       done < "$dir/.candidate-manifest"
       printf '%s\n' "$delivered" > "$dir/delivered-sha"
-      mv -f "$dir/.candidate-manifest" "$dir/delivered-manifest"
-      rm -rf "$candidate" "$readback"; transition "$id" DELIVERED "$(field "$dir/journal" identity)"; return 0
+      cp -p "$dir/.candidate-manifest" "$dir/delivered-manifest"
+      fsync_paths "$dir/delivered-sha" "$dir/delivered-manifest" "$dir" || return 4
+      rm -rf "$candidate" "$readback"; transition "$id" DELIVERED "$(field "$dir/journal" identity)"
+      fsync_paths "$dir/journal" "$dir" || return 4
+      return 0
     fi
     rm -rf "$candidate"
   done
   transition "$id" CONFLICT "$(field "$dir/journal" identity)"
   return 5
 }
-integrate() { with_lock integrate_unlocked "$@"; }
+integrate() {
+  if integration_queue_enabled; then
+    local accepted job
+    accepted="$(integration_queue enqueue "$1")" || return $?
+    job="$(printf '%s' "$accepted" | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["job_id"])')" || return 2
+    integration_queue wait "$job"
+  else
+    with_lock integrate_unlocked "$@"
+  fi
+}
 close_session() {
-  local id="$1" dir state root
+  local id="$1" mode="${2:-wait}" dir state root
+  [[ "$mode" != enqueue ]] || integration_queue_enabled || { echo 'harness-session: queue is not enabled for this pool' >&2; return 2; }
   dir="$(session_dir "$id")"; state="$(field "$dir/journal" state)"; root="$(<"$dir/session-root")"
+  if integration_queue_enabled && [[ "$state" == SUBMITTED || "$state" == INTEGRATING || "$state" == DELIVERED ]]; then
+    if [[ "$mode" == enqueue ]]; then integration_queue enqueue "$id"
+    else integrate "$id"; fi
+    return
+  fi
   use_session_git "$id" || return $?
   if [[ "$state" == OPEN ]]; then
     local rc=0
@@ -1245,6 +1320,7 @@ close_session() {
   fi
   [[ "$state" == OPEN ]] && submit "$id"
   [[ "$(field "$dir/journal" state)" == SUBMITTED ]] || { echo "cannot close $state session" >&2; return 2; }
+  if [[ "$mode" == enqueue ]]; then integration_queue enqueue "$id"; return; fi
   integrate "$id"
 }
 # write_discard_patch <id> <dir>: the session work tree against its base as a
@@ -1324,6 +1400,33 @@ discard_unlocked() {
   )
 }
 case "${1:-}" in
+  queue) shift; integration_queue "$@" ;;
+  wait) shift; integration_queue wait "$@" ;;
+  _queue-execute)
+    shift; [[ $# -eq 2 ]] || exit 2
+    # Never trust inherited INPUT_DIR. Only the job's current inherited leases
+    # and pinned runtime can authorize entry past the old compatibility gate.
+    unset INTEGRATION_INPUT_DIR
+    INTEGRATION_INPUT_DIR="$(integration_queue authorize "$1" "$2" --home "${HARNESS_INTEGRATION_HOME:?}")" || exit $?
+    export INTEGRATION_INPUT_DIR
+    integration_queue guardian --home "$HARNESS_INTEGRATION_HOME" >/dev/null &
+    integration_queue await-guardian --home "$HARNESS_INTEGRATION_HOME" || exit $?
+    case "$1" in
+      gc) gc_unlocked; exit $? ;;
+      recover) recover_unlocked "$2"; exit $? ;;
+      discard) discard_unlocked "$2"; exit $? ;;
+      integrate) ;;
+      *) exit 2 ;;
+    esac
+    queued_state="$(field "$(session_dir "$2")/journal" state)"
+    if [[ "$queued_state" == INTEGRATING ]]; then
+      integration_queue recovery-check --home "$HARNESS_INTEGRATION_HOME" || exit $?
+      recover_unlocked "$2"; queued_state="$(field "$(session_dir "$2")/journal" state)"
+    fi
+    if [[ "$queued_state" == DELIVERED ]]; then exit 0; fi
+    [[ "$queued_state" == SUBMITTED ]] || exit 2
+    integrate_unlocked "$2"
+    ;;
   create)
     shift
     if [[ "${1:-}" == --reserved ]]; then
@@ -1341,7 +1444,10 @@ case "${1:-}" in
       exec python3 -I "$creation_script" legacy-create --engine "$0" --state "$(state_home)" "$1"
     fi
     ;;
-  discard) shift; [[ $# -eq 1 ]] || exit 2; with_lock discard_unlocked "$1" ;;
+  discard)
+    shift; [[ $# -eq 1 ]] || exit 2
+    if integration_queue_enabled; then integration_queue control discard "$1" --wait
+    else with_lock discard_unlocked "$1"; fi ;;
   resolve-run-dir) shift; [[ $# -eq 3 ]] || exit 2; resolve_run_dir "$@" ;;
   resume) shift; [[ $# -eq 2 ]] || exit 2; resume_session "$1" "$2" ;;
   transition)
@@ -1395,6 +1501,9 @@ case "${1:-}" in
   verifier-sandbox-profile) shift; [[ $# -eq 5 ]] || exit 2; verifier_sandbox_profile "$@" ;;
   submit) shift; submit "$1" ;;
   integrate) shift; [[ $# -eq 1 ]] || exit 2; integrate "$1" ;;
-  close) shift; [[ $# -eq 1 ]] || exit 2; close_session "$1" ;;
-  *) echo 'usage: harness-session {create|resolve-run-dir|resume|transition|exit|recover|list|heartbeat|report|gc|reserve-hold|release-hold|submit|integrate|close|discard|sandbox-check}' >&2; exit 2 ;;
+  close)
+    shift; close_mode=wait
+    if [[ "${1:-}" == --enqueue || "${1:-}" == --wait ]]; then close_mode="${1#--}"; shift; fi
+    [[ $# -eq 1 ]] || exit 2; close_session "$1" "$close_mode" ;;
+  *) echo 'usage: harness-session {create|resolve-run-dir|resume|transition|exit|recover|list|heartbeat|report|gc|reserve-hold|release-hold|submit|integrate|close [--enqueue|--wait]|queue|wait|discard|sandbox-check}' >&2; exit 2 ;;
 esac

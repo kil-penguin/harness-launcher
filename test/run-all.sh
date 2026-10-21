@@ -80,6 +80,7 @@ add_test test_session_pools.py resolved 1
 add_test test_session_work_proof.py resolved 1
 add_test test_session_gc_safety.py resolved 1
 add_test test_session_maintenance.py resolved 1
+add_test test_integration_queue.py resolved 1
 add_test test_omp_fixture_source.py isolated 1
 add_test test_run_all_partition.py isolated 1
 # End inventory.

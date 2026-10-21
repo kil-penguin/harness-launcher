@@ -2,7 +2,18 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
-## Unreleased — Managed Codex policy
+## 0.72.0 — 2026-10-21
+
+- Add an explicitly enabled durable integration queue with immutable submissions
+  and pinned runtimes. Asynchronous acceptance and bounded client waiting are
+  separate from verified delivery; synchronous close retains its result contract.
+- Serialize queued delivery per destination across old and profile pools, with a
+  bounded host worker/test budget. Keep every enrolled legacy integration gate
+  until owned execution groups and inherited leases finish; reconcile uncertain
+  pushes against fresh remote history instead of submitting twice.
+- Route recovery, discard and retention through the same coordinator. Provide
+  job phases, timing, logs and an explicitly installed, pinned LaunchAgent;
+  ordinary launch/close commands never install or enable a background service.
 
 - Allow read-only access to the fixed, trusted macOS system Codex requirements
   file in headless agent sandboxes, preserving administrator policy without
@@ -10,7 +21,7 @@ Notable changes are recorded here. This project follows semantic versioning for 
 - Bootstrap Codex configuration during sandbox preflight so configuration
   failures are reported before model requests, even when `--version` succeeds.
 
-## Unreleased — Python cache preservation
+## 0.71.1 — 2026-10-21
 
 - Allow session GC to account for untracked CPython caches after checking the
   sibling Git source and cache fingerprint. Exact regeneration proves derived
