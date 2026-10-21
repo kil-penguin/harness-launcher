@@ -2,7 +2,7 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
-## Unreleased
+## 0.71.0 — 2026-10-21
 
 - Remove pool GC from agent startup. Add bounded report-before-apply maintenance
   primitives for explicitly installed management jobs; report-only remains the default.
