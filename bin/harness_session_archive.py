@@ -11,6 +11,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+if __package__:
+    from .harness_file_clone import clone_from_fd
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from harness_file_clone import clone_from_fd
+
 MAX_FILE_BYTES = 1024 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_FILES = 10_000
@@ -197,11 +203,13 @@ def _copy_file(source, destination, total):
     copied = 0
     with os.fdopen(fd, 'rb', buffering=0) as incoming:
         _private_parents(destination.parent)
-        with open(destination, 'xb', buffering=0) as outgoing:
+        cloned = clone_from_fd(incoming.fileno(), destination)
+        with open(destination, 'rb' if cloned else 'xb', buffering=0) as outgoing:
             while chunk := incoming.read(CHUNK):
                 if copied + len(chunk) > MAX_FILE_BYTES or total + copied + len(chunk) > MAX_TOTAL_BYTES:
                     raise ArchiveError('archive source grew beyond byte limits')
-                outgoing.write(chunk)
+                if not cloned:
+                    outgoing.write(chunk)
                 digest.update(chunk)
                 copied += len(chunk)
             outgoing.flush()

@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LAUNCHER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP="$(mktemp -d)"; TMP="${TMP:A}"
 trap 'rm -rf "$TMP"' EXIT
+: > "$TMP/pstable"
 HARNESS="$TMP/harness"
 BIN="$TMP/bin"
 STATE="$TMP/state"
@@ -74,7 +75,7 @@ write_record() { # <id> [ENV=val ...]
   local id="$1"; shift
   printf '{"hook_event_name":"SessionStart","source":"startup","session_id":"%s"}' "$id" \
     | env HARNESS_SESSION_STATE_HOME="$STATE" HARNESS_LAUNCH_SOURCE_ROOT="$HARNESS" HARNESS_LAUNCH_ISOLATED=0 "$@" \
-        "$PY" "$LAUNCHER_DIR/bin/harness-launch-record" codex
+        "$PY" "$LAUNCHER_DIR/bin/harness-launch-record" codex --pstable "$TMP/pstable"
 }
 MODEL_ARGS_RE='^--cd .* -p base -m gpt-6\.1-sol -c model_reasoning_effort="medium" '
 
@@ -265,7 +266,7 @@ run_codex "$OUT" HARNESS_LAUNCH_NETWORK=enabled -- base
 # the row's origin, and only for a top-level launch. These cases drive the two
 # decision functions directly; test-codex-history-resume-integration.sh runs the
 # whole import.
-cp "$LAUNCHER_DIR/bin/codex-history.py" "$LAUNCHER_DIR/bin/harness_launch_context.py" "$BIN/"
+cp "$LAUNCHER_DIR/bin/codex-history.py" "$LAUNCHER_DIR/bin/harness_launch_context.py" "$LAUNCHER_DIR/bin/harness_file_clone.py" "$LAUNCHER_DIR/bin/harness_session_pools.py" "$LAUNCHER_DIR/bin/harness_profile_resolver.py" "$BIN/"
 YXDG="$TMP/xdg"; YLEGACY="$YXDG/harness-launcher"; mkdir -p "$YLEGACY"
 TOP_BIN="$TMP/topbin"; NESTED_BIN="$TMP/nestedbin"
 for d in "$TOP_BIN" "$NESTED_BIN"; do mkdir -p "$d"; cp "$BIN"/* "$d/"; done
@@ -276,7 +277,7 @@ yrecord() { # <state-home> <id> <isolated 0|1> <session-id|-> [ENV=val ...]
   local -a extra=(); [[ "$sid" == - ]] || extra=(HARNESS_SESSION_ID="$sid")
   printf '{"hook_event_name":"SessionStart","source":"startup","session_id":"%s"}' "$id" \
     | env -u HARNESS_SESSION_ID HARNESS_SESSION_STATE_HOME="$state" HARNESS_LAUNCH_SOURCE_ROOT="$HARNESS" HARNESS_LAUNCH_ISOLATED="$iso" "${extra[@]}" "$@" \
-        "$PY" "$LAUNCHER_DIR/bin/harness-launch-record" codex
+        "$PY" "$LAUNCHER_DIR/bin/harness-launch-record" codex --pstable "$TMP/pstable"
 }
 yrollout() { # <home> <id>
   mkdir -p "$1/sessions/2026/10/10"
@@ -292,7 +293,7 @@ yisolated() { # <state-home> <iso-uuid> <native-id>: a live isolated session hom
 }
 yresolve() { # <bin dir> <id> -> "approval=.. sandbox=.." or NONE
   (
-    export HOME="$TMP/home" XDG_STATE_HOME="$YXDG" HARNESS_SESSION_STATE_HOME="$STATE" PATH="$BIN:/usr/bin:/bin"
+    export HOME="$TMP/home" XDG_STATE_HOME="$YXDG" HARNESS_SESSION_STATE_HOME="${3:-$STATE}" HARNESS_SESSION_POOL_BASE="${4:-}" PATH="$BIN:/usr/bin:/bin"
     source "$LAUNCHER_DIR/bin/aliases.zsh"
     _HARNESS_LAUNCHER_BIN="$1"
     local inherited_harness_session_id="" restore_approval restore_sandbox restore_network restore_bypass restore_isolated restore_profile restore_permission restore_window restore_context o
@@ -386,5 +387,16 @@ FAKE_BIN="$REC_BIN" run_codex "$OUT" HARNESS_SESSION_ID= HARNESS_CODEX_HISTORY_N
 grep -Fqx 'sid= argv=top-level' "$TEST_CTX_LOG" || fail "Y6 control: context check not run without a caller id: $(cat "$TEST_CTX_LOG")"
 unset TEST_CTX_LOG
 echo 'PASS: Y6 caller HARNESS_SESSION_ID reaches the top-level check and withholds the grant'
+
+# Y7: a fresh profile pool can read the original shared owner's grant only
+# through the source-bound reselected row, without moving the old root.
+mkdir -p "$TMP/home/.config/harness-launcher/profiles" "$STATE/qa"
+print -r -- "$HARNESS" > "$TMP/home/.config/harness-launcher/profiles/qa"
+YSHARED=01a0ef50-1bec-7852-afb3-a6b6559f4c07
+ISO_SHARED=11111111-2222-4333-8444-555555555557
+yisolated "$STATE" "$ISO_SHARED" "$YSHARED"
+yrecord "$STATE" "$YSHARED" 1 "$ISO_SHARED" "${G_ENV[@]}"
+[[ "$(yresolve "$TOP_BIN" "$YSHARED" "$STATE/qa" "$STATE")" == "$GRANT" ]] || fail 'Y7 shared original grant was lost when restoring into the new profile pool'
+echo 'PASS: Y7 profile pool preserves shared original grant and absolute owner'
 
 echo 'PASS: Codex restore fidelity'

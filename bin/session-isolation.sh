@@ -393,6 +393,17 @@ terminal_epoch() {
 }
 # Called only under the stock per-root lease. Native verification must see the
 # original pathname disappear; failures restore the same directory/inode.
+work_content_verified() {
+  local dir="$1" root="$2" helper tmp
+  helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/harness_session_work_proof.py"
+  [[ -f "$helper" && ! -L "$helper" ]] || return 1
+  tmp="$(mktemp "$dir/.work-proof.XXXXXX")" || return 1
+  if python3 -I "$helper" --state "$(cd "$dir/../.." && pwd -P)" --owner "${dir##*/}" --retained-root "$root" > "$tmp"; then
+    mv -f "$tmp" "$dir/work-proof.json"
+  else
+    rm -f "$tmp"; return 1
+  fi
+}
 retire_native_root() {
   local root="$1" tomb="$2" dir="$3" source="$4" id="$5" staged="${6:-0}"
   local helper py native catalog receipt output snapshot revision='legacy-unknown'
@@ -413,8 +424,16 @@ retire_native_root() {
   if [[ "$staged" != 1 ]]; then
     [[ ! -e "$tomb" && ! -L "$tomb" ]] && mv "$root" "$tomb" || return 1
   fi
+  if ! work_content_verified "$dir" "$tomb"; then
+    if [[ "$staged" != 1 && ! -e "$root" && ! -L "$root" ]]; then mv "$tomb" "$root" || return 1; fi
+    return 1
+  fi
   if ! "$py" -I "$helper" verify --catalog "$catalog" --snapshot "$snapshot" \
       --source "$tomb/.harness/codex" --codex-bin "$native" >/dev/null; then
+    if [[ "$staged" != 1 && ! -e "$root" && ! -L "$root" ]]; then mv "$tomb" "$root" || return 1; fi
+    return 1
+  fi
+  if ! work_content_verified "$dir" "$tomb"; then
     if [[ "$staged" != 1 && ! -e "$root" && ! -L "$root" ]]; then mv "$tomb" "$root" || return 1; fi
     return 1
   fi
@@ -517,24 +536,19 @@ gc_unlocked() {
     [[ -d "$tomb" && ! -L "$tomb" ]] || continue
     tomb_name="${tomb##*/}"; tomb_id="${tomb_name#.retired-}"; tomb_id="${tomb_id%-*}"; tomb_nonce="${tomb_name##*-}"
     valid_id "$tomb_id" && [[ "$tomb_nonce" =~ ^[0-9]+$ ]] || continue
-    presence="$("$history_python" -I "$history_helper" presence --source "$tomb/.harness/codex" --anchor "$state")" || { retained=$((retained + 1)); continue; }
-    if [[ "$presence" != absent ]]; then
-      # Old tombs have no successful Native restore receipt. Preserve them;
-      # protect-pool can recover/validate an owner-bound remnant explicitly.
-      retained=$((retained + 1)); continue
-    fi
-    dir="$sessions/$tomb_id"
-    [[ -f "$dir/source-root" && ! -L "$dir/source-root" ]] || continue
-    IFS= read -r source < "$dir/source-root"
-    archive_verified "$state" "$tomb_id" "$source" || continue
-    rm -rf -- "$tomb"
-    agent_usage_sync "$tomb_id" "$source"
+    # A transcript archive alone cannot prove the work content of an old
+    # crash tomb. Preserve it for explicit identity/lease/work reconstruction.
+    retained=$((retained + 1))
   done
   for tomb in "$worktrees"/.archiving-*; do
     [[ -d "$tomb" && ! -L "$tomb" ]] || continue
     tomb_name="${tomb##*/}"; tomb_id="${tomb_name#.archiving-}"; tomb_id="${tomb_id%-*}"; tomb_nonce="${tomb_name##*-}"
     valid_id "$tomb_id" && [[ "$tomb_nonce" =~ ^[0-9]+$ ]] || continue
+    [[ -z "${HARNESS_GC_OWNER_FILTER:-}" || "$tomb_id" == "$HARNESS_GC_OWNER_FILTER" ]] || continue
     dir="$sessions/$tomb_id"; root="$worktrees/$tomb_id"
+    if [[ -n "${HARNESS_GC_SOURCE_FILTER:-}" ]]; then
+      [[ -f "$dir/source-root" && ! -L "$dir/source-root" && "$(<"$dir/source-root")" == "$HARNESS_GC_SOURCE_FILTER" ]] || continue
+    fi
     [[ ! -e "$root" && ! -L "$root" && -f "$dir/runtime.lock" && ! -L "$dir/runtime.lock" ]] || { retained=$((retained + 1)); continue; }
     (
       exec 8>"$dir/runtime.lock"; /usr/bin/lockf -s -t 0 8 || exit 11
@@ -548,6 +562,10 @@ gc_unlocked() {
   for dir in "$sessions"/*; do
     [[ -d "$dir" && ! -L "$dir" ]] || continue
     id="${dir##*/}"; valid_id "$id" || continue
+    [[ -z "${HARNESS_GC_OWNER_FILTER:-}" || "$id" == "$HARNESS_GC_OWNER_FILTER" ]] || continue
+    if [[ -n "${HARNESS_GC_SOURCE_FILTER:-}" ]]; then
+      [[ -f "$dir/source-root" && ! -L "$dir/source-root" && "$(<"$dir/source-root")" == "$HARNESS_GC_SOURCE_FILTER" ]] || continue
+    fi
     scanned=$((scanned + 1)); journal="$dir/journal"; marker="$dir/lease-v1"; lock="$dir/runtime.lock"
     [[ -f "$lock" && ! -L "$lock" ]] && lease_marker_valid "$marker" && terminal_record_valid "$dir" || { retained=$((retained + 1)); continue; }
     status="$(field "$journal" state)"
@@ -568,9 +586,10 @@ gc_unlocked() {
       [[ "$(cd "$root" && pwd -P)" == "$expected" && -d "$source" && "$(cd "$source" && pwd -P)" != "$expected" ]] || exit 17
       root_intact "$dir" "$root" || exit 17
       resume_hold_preserves_root "$dir" "$id" "$source" && exit 21
+      work_content_verified "$dir" "$root" || exit 23
       # Binding checks above establish this physical path; keep the recorded
       # spelling for provenance even when system temp paths have aliases.
-      presence="$("$history_python" -I "$history_helper" presence --source "$expected/.harness/codex" --anchor "$state")" || exit 21
+      presence="$("$history_python" -I "$history_helper" content-kind --source "$expected/.harness/codex" --anchor "$state")" || exit 21
       if [[ "$presence" == native ]]; then
         [[ -z "${HARNESS_HISTORY_SOURCE_ROOT:-}" || "$source" == "$HARNESS_HISTORY_SOURCE_ROOT" ]] || exit 21
         tomb="$worktrees/.archiving-$id-${BASHPID:-$$}"
@@ -578,11 +597,15 @@ gc_unlocked() {
         agent_usage_sync "$id" "$source"
         exit 0
       fi
-      [[ "$presence" == absent ]] || exit 21
+      [[ "$presence" == absent || "$presence" == generated ]] || exit 21
       archive_session_transcripts "$state" "$id" "$source" "$root" || exit 22
       tomb="$worktrees/.retired-$id-${BASHPID:-$$}"
       [[ ! -e "$tomb" && ! -L "$tomb" ]] || exit 18
       mv "$root" "$tomb" || exit 19
+      if ! work_content_verified "$dir" "$tomb"; then
+        [[ ! -e "$root" && ! -L "$root" ]] && mv "$tomb" "$root"
+        exit 23
+      fi
       rm -rf -- "$tomb" || exit 20
       agent_usage_sync "$id" "$source"
     ) && retired=$((retired + 1)) || retained=$((retained + 1))
@@ -716,17 +739,27 @@ session_has_changes() {
   out="$(session_git -C "$1" status --porcelain --ignore-submodules=all --untracked-files=all -- . "${EXCLUDED_PATHSPEC[@]}")" || return 2
   [[ -n "$out" ]] || return 1
 }
+write_exit_reason() {
+  local dir="$1" reason="$2" code="$3" tmp
+  tmp="$(mktemp "$dir/.exit-reason.XXXXXX")" || return 1
+  printf 'reason=%s\nexit_code=%s\nobserved_at=%s\n' "$reason" "$code" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+  mv -f "$tmp" "$dir/exit-reason"
+}
 exit_session() {
   local id="$1" dir root state
   dir="$(session_dir "$id")"; root="$(<"$dir/session-root")"; state="$(field "$dir/journal" state)"
   if [[ "$state" == OPEN ]]; then
     local refused=0
     use_session_git "$id" || refused=$?
-    [[ "$refused" == 0 ]] || { transition "$id" ABANDONED; return "$refused"; }
+    [[ "$refused" == 0 ]] || { write_exit_reason "$dir" git_preflight_refused "$refused"; transition "$id" ABANDONED; return "$refused"; }
     # Only a clean answer closes; changes or a git error keep the work.
     local rc=0
     session_has_changes "$root" "$(<"$dir/base-sha")" || rc=$?
-    if [[ "$rc" == 1 ]]; then transition "$id" CLOSED; else transition "$id" ABANDONED; fi
+    if [[ "$rc" == 1 ]]; then write_exit_reason "$dir" clean "$rc"; transition "$id" CLOSED
+    else
+      if [[ "$rc" == 0 ]]; then write_exit_reason "$dir" work_changes "$rc"; else write_exit_reason "$dir" git_read_error "$rc"; fi
+      transition "$id" ABANDONED
+    fi
   fi
 }
 recover_unlocked() {
@@ -778,7 +811,24 @@ list() {
     id="${dir##*/}"; state="$(field "$dir/journal" state)"
     if [[ -f "$dir/heartbeat" ]]; then heartbeat="$(heartbeat_epoch "$(<"$dir/heartbeat")")"; else heartbeat="$(heartbeat_epoch "$(field "$dir/journal" heartbeat)")"; fi
     age=$((now - heartbeat))
-    if [[ "$state" == OPEN && "$age" -gt "$limit" ]]; then transition "$id" ABANDONED; state=ABANDONED; fi
+    if [[ "$state" == OPEN && "$age" -gt "$limit" ]]; then
+      # Stale heartbeats do not prove a runtime stopped. Only lease-v1 owners
+      # with an available runtime lease can be observed as abandoned.
+      if [[ -f "$dir/lease-v1" && ! -L "$dir/lease-v1" && "$(<"$dir/lease-v1")" == 1 && -f "$dir/runtime.lock" && ! -L "$dir/runtime.lock" ]]; then
+        (
+          exec 8>"$dir/runtime.lock"; /usr/bin/lockf -s -t 0 8 || exit 1
+          [[ "$(field "$dir/journal" state)" == OPEN ]] || exit 1
+          local latest
+          if [[ -f "$dir/heartbeat" ]]; then latest="$(heartbeat_epoch "$(<"$dir/heartbeat")")"; else latest="$(heartbeat_epoch "$(field "$dir/journal" heartbeat)")"; fi
+          [[ $((now - latest)) -gt "$limit" ]] || exit 1
+          local reason_tmp
+          reason_tmp="$(mktemp "$dir/.exit-reason.XXXXXX")" || exit 1
+          printf 'reason=stale_without_lease\nexit_code=unknown\nobserved_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$reason_tmp"
+          mv "$reason_tmp" "$dir/exit-reason" && transition "$id" ABANDONED
+        ) || true
+        state="$(field "$dir/journal" state)"
+      fi
+    fi
     printf '%s %s\n' "$id" "$state"
   done
 }
@@ -1317,7 +1367,15 @@ case "${1:-}" in
     source "$report_dir/harness-common.sh"
     report_python="$(harness_python3_resolve)" || exit $?
     exec "$report_python" -I "$report_dir/harness_session_report.py" "$@" ;;
-  gc) shift; [[ $# -eq 0 ]] || exit 2; gc_sessions ;;
+  gc)
+    shift
+    HARNESS_GC_OWNER_FILTER="" HARNESS_GC_SOURCE_FILTER=""
+    if [[ $# -gt 0 ]]; then
+      [[ $# -eq 4 && "$1" == --owner && "$3" == --source-root ]] && valid_id "$2" || exit 2
+      HARNESS_GC_OWNER_FILTER="$2"; HARNESS_GC_SOURCE_FILTER="$4"
+      [[ -d "$4" && ! -L "$4" ]] || exit 2
+    fi
+    gc_sessions ;;
   reserve-hold) shift; [[ $# -eq 5 ]] || exit 2; reserve_hold "$@" ;;
   release-hold) shift; [[ $# -eq 2 ]] || exit 2; release_hold "$@" ;;
   sandbox-check) shift; [[ $# -eq 1 ]] || exit 2; sandbox_check "$1" ;;

@@ -400,6 +400,10 @@ For explicit read-only disk diagnostics, run `harness-session report --json`.
 It explains retained roots and unknown verification without running GC. Add
 `--sizes` for bounded metadata-only size observations; these figures do not
 establish physically reclaimable space. See [session disk diagnostics](docs/session-report.md).
+Agent startup does not run pool GC. Optional managed background maintenance
+defaults to report-only and requires explicit installation and deletion approval.
+New managed sessions can use registered profile pools while old UUIDs keep their
+absolute roots and bound launcher versions.
 
 The release also includes `bin/harness-plan`: a side-effect-free JSON interface to the validated model, effort, context and permission plan used by managed workspace controls. See [managed workspace creation](docs/herdr-web-ui.md#managed-workspace-creation-and-previous-conversations). It renders a plan; starting an agent still requires an explicit launch.
 

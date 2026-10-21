@@ -9,8 +9,10 @@ HARNESS_SESSION_STATE_HOME=/path/to/session-state harness-session report --json
 The report does not run automatically at startup. It never calls GC, archive,
 restore, native history verification, or stale-hold cleanup. It does not create
 missing state directories or update journals, leases, holds, archives, or roots.
-Existing `harness-session gc` behavior and its default 24-hour retention remain
-unchanged. This command is available after installing a release containing it;
+GC keeps the default 24-hour retention and now rechecks every retained work
+file against the base, verified delivery, or reconstructed discard patch under
+the runtime lease. Staged-only, ignored, unknown, or later changes are retained.
+This command is available after installing a release containing it;
 for source-tree tests use `bash bin/session-isolation.sh report --json`.
 
 The result includes each observed UUID's recorded lifecycle, age in seconds,
@@ -128,3 +130,25 @@ Missing or unsafe state produces JSON with `scan_status: "unknown"` and problems
 other incomplete coverage uses `partial`. Inspect these fields even on exit 0.
 Invalid CLI options or retention values exit 2. JSON contains local identity paths
 and is intended for local diagnostics; public examples should use synthetic data.
+
+## Managed maintenance
+
+Interactive and non-interactive agent startup do not scan the pool or run GC.
+A verified management entry can invoke `maintain --report-only` (the default)
+or the separately approved `maintain --apply`. It scans registered source pools
+plus legacy/shared pools, writes a private durable before-report, and starts at
+most ten targeted owners within a 300-second new-work budget. A host sweep lock
+and the existing owner leases serialize work. An in-flight archive is allowed
+to finish; a deadline does not kill a process during a rename or deletion.
+
+The optional host installer is owned by the management harness. Its six-hour
+LaunchAgent is installed only on explicit request, defaults to report-only,
+and requires a separate approval before enabling deletion. It verifies the
+loaded immutable dispatcher and exact mode. Engine installation alone does not
+install or activate a job. No native snapshot or transcript archive expires
+automatically. Unverified Native versions and parent-history formats remain held.
+
+New managed sessions use `session-state/<registered-profile>/`; existing UUIDs
+keep their recorded absolute root and immutable binding in the shared pool.
+Existing roots are never moved to adopt this layout. Profiles are identified
+by their registered source root, and ambiguous owners are refused.

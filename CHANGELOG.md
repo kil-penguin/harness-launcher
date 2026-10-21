@@ -2,6 +2,19 @@
 
 Notable changes are recorded here. This project follows semantic versioning for published launcher packages.
 
+## Unreleased
+
+- Remove pool GC from agent startup. Add bounded report-before-apply maintenance
+  primitives for explicitly installed management jobs; report-only remains the default.
+- Recheck terminal work files, staged changes and saved discard patches under
+  the runtime lease before retirement. Live leases prevent stale abandonment.
+- Support registered profile pools for new managed sessions while retaining
+  old absolute roots and immutable bindings. Restore selected Codex raw history
+  without copying unrelated databases; unsupported parent projections refuse.
+- Use private copy-on-write snapshot/archive copies where supported. Keep unique
+  native snapshots and transcript archives without automatic expiry. Native
+  0.163 full-retirement proof remains unsupported and holds the original root.
+
 ## 0.70.0 — 2026-10-20
 
 - Reserve a private session identity and creation lease before fetch or clone.

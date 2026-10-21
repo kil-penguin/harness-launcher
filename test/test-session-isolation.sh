@@ -64,7 +64,7 @@ grep -q 'cannot resume SUBMITTED session; run harness-session integrate or recov
 printf '%s\n' dirty > "$first_root/new.txt"
 HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" exit "$first_id"
 grep -qx 'state=ABANDONED' "$STATE/sessions/$first_id/journal" || { echo 'FAIL: dirty exit must be ABANDONED'; exit 1; }
-HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" recover "$first_id" | grep -qx "HARNESS_SESSION_ROOT=$first_root" || { echo 'FAIL: abandoned session must be recoverable'; exit 1; }
+HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" recover "$first_id" | grep -x "HARNESS_SESSION_ROOT=$first_root" >/dev/null || { echo 'FAIL: abandoned session must be recoverable'; exit 1; }
 
 stale="$(create)"
 stale_id="$(printf '%s\n' "$stale" | sed -n 's/^HARNESS_SESSION_ID=//p')"
@@ -354,7 +354,9 @@ git --git-dir="$REMOTE" show main:preack-crash | grep -qx delivered || { echo 'F
 postpush_race="$(create)"; postpush_race_root="$(printf '%s\n' "$postpush_race" | sed -n 's/^HARNESS_SESSION_ROOT=//p')"; postpush_race_id="$(printf '%s\n' "$postpush_race" | sed -n 's/^HARNESS_SESSION_ID=//p')"
 printf delivered > "$postpush_race_root/postpush-race"; HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" submit "$postpush_race_id"
 HARNESS_SESSION_TEST_POST_PUSH_DELAY=2 HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" integrate "$postpush_race_id" & race_pid=$!
-for _ in {1..100}; do [[ -f "$STATE/sessions/$postpush_race_id/push-ack" ]] && break; sleep 0.05; done
+# Git/verification can take over five seconds on a busy host; wait for the
+# acknowledgement itself within a bounded minute, rather than racing startup.
+for _ in {1..1200}; do [[ -f "$STATE/sessions/$postpush_race_id/push-ack" ]] && break; sleep 0.05; done
 [[ -f "$STATE/sessions/$postpush_race_id/push-ack" ]] || { echo 'FAIL: successful push must persist an acknowledgement before readback'; exit 1; }
 race_advance="$TMP/postpush-race-advance"; git clone -q "$REMOTE" "$race_advance"; git -C "$race_advance" config user.email test@example.invalid; git -C "$race_advance" config user.name test
 printf advanced > "$race_advance/after-race"; git -C "$race_advance" add after-race; git -C "$race_advance" commit -qm after-race; git -C "$race_advance" push -q origin HEAD:main
@@ -383,7 +385,7 @@ grep -q '"Read"' "$headless_root/.claude/settings.local.json" || { echo 'FAIL: h
 echo 'PASS: headless clones copy machine-local files without links or env secrets'
 
 # Headless clone hardening: no cwd module hijack, no symlink-following writes.
-PY_ABS="$(command -v python3)"
+PY_ABS="$(python3 -c 'import sys; print(sys.executable)')"
 mkdir -p "$TMP/hijack"
 printf '%s\n' "open('$TMP/hijack-ran', 'w').write('x')" 'from importlib import import_module' > "$TMP/hijack/json.py"
 hijack_root="$(cd "$TMP/hijack" && HARNESS_HEADLESS=1 HARNESS_PYTHON_BIN="$PY_ABS" HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" create "$SOURCE" | sed -n 's/^HARNESS_SESSION_ROOT=//p')"
@@ -412,7 +414,9 @@ expect_headless_refusal() {
 dangling_src="$(headless_link_source dangling-src)"
 mkdir -p "$dangling_src/.claude" "$TMP/outside-dangling"
 ln -s "$TMP/outside-dangling/settings.local.json" "$dangling_src/.claude/settings.local.json"
-git -C "$dangling_src" add -A && git -C "$dangling_src" commit -qm link
+# These fixtures deliberately track unsafe local paths, including when a host
+# global ignore normally excludes .claude.
+git -C "$dangling_src" add -f -A && git -C "$dangling_src" commit -qm link
 rm "$dangling_src/.claude/settings.local.json"; printf '%s\n' '{}' > "$dangling_src/.claude/settings.local.json"
 expect_headless_refusal "$dangling_src" 'a dangling settings symlink'
 [[ ! -e "$TMP/outside-dangling/settings.local.json" ]] || { echo 'FAIL: headless copy wrote through a dangling symlink'; exit 1; }
@@ -420,7 +424,7 @@ expect_headless_refusal "$dangling_src" 'a dangling settings symlink'
 dir_src="$(headless_link_source dir-src)"
 mkdir -p "$TMP/outside-dir"
 ln -s "$TMP/outside-dir" "$dir_src/.claude"
-git -C "$dir_src" add -A && git -C "$dir_src" commit -qm link
+git -C "$dir_src" add -f -A && git -C "$dir_src" commit -qm link
 rm "$dir_src/.claude"; mkdir -p "$dir_src/.claude"; printf '%s\n' '{}' > "$dir_src/.claude/settings.local.json"
 expect_headless_refusal "$dir_src" 'a symlinked .claude directory'
 [[ ! -e "$TMP/outside-dir/settings.local.json" ]] || { echo 'FAIL: headless copy wrote through a symlinked parent'; exit 1; }
@@ -647,7 +651,7 @@ git --git-dir="$REMOTE" show main:headless-ignored.txt >/dev/null || { echo 'FAI
 mkdir -p "$TMP/tplhome" "$TMP/tpl/hooks"
 printf '#!/bin/sh\ntouch "%s"\n' "$TMP/template-hook-ran" > "$TMP/tpl/hooks/post-checkout"; chmod +x "$TMP/tpl/hooks/post-checkout"
 printf '[init]\n\ttemplateDir = %s\n' "$TMP/tpl" > "$TMP/tplhome/.gitconfig"
-tpl_out="$(HOME="$TMP/tplhome" HARNESS_HEADLESS=1 HARNESS_PYTHON_BIN="$PY_ABS" HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" create "$SOURCE")" || { echo 'FAIL: headless create must survive a hooks-only git template'; exit 1; }
+tpl_out="$(PATH="${PY_ABS%/*}:$PATH" HOME="$TMP/tplhome" HARNESS_HEADLESS=1 HARNESS_PYTHON_BIN="$PY_ABS" HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" create "$SOURCE")" || { echo 'FAIL: headless create must survive a hooks-only git template'; exit 1; }
 tpl_id="$(printf '%s\n' "$tpl_out" | sed -n 's/^HARNESS_SESSION_ID=//p')"
 grep -qx '/projects' "$STATE/sessions/$tpl_id/trusted.git/info/exclude" || { echo 'FAIL: trusted.git must ignore the excluded paths'; exit 1; }
 [[ ! -e "$STATE/sessions/$tpl_id/trusted.git/hooks/post-checkout" ]] || { echo 'FAIL: user template hooks must not reach trusted.git'; exit 1; }
@@ -803,7 +807,7 @@ for mode in headless interactive; do
     HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" recover "$v_id" >/dev/null
   fi
   rm -f "$VHOME/verifier-wrote-home"
-  HOME="$VHOME" SSH_AUTH_SOCK=/tmp/agent.sock GH_TOKEN=leak-gh GITHUB_TOKEN=leak-github NPM_TOKEN=leak-npm LANG=en_US.UTF-8 \
+  PATH="${PY_ABS%/*}:$PATH" HOME="$VHOME" SSH_AUTH_SOCK=/tmp/agent.sock GH_TOKEN=leak-gh GITHUB_TOKEN=leak-github NPM_TOKEN=leak-npm LANG=en_US.UTF-8 \
     GIT_ASKPASS=/tmp/askpass HOMEBREW_GITHUB_API_TOKEN=leak-brew ANTHROPIC_API_KEY=leak-anthropic OPENAI_API_KEY=leak-openai \
     CLAUDE_CODE_OAUTH_TOKEN=leak-claude \
     HARNESS_SESSION_STATE_HOME="$STATE" "$ISOLATION" close "$v_id" > "$TMP/venv-$mode.out" || { echo "FAIL: $mode verifier-env close"; exit 1; }

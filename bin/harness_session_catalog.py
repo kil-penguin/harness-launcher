@@ -426,10 +426,29 @@ def catalog(state: Path, sources: Dict[str, Path], home: Path) -> dict:
         except OSError:
             problems.append({'kind': 'source_missing', 'profile': profile})
             continue
-        items.extend(_source_sessions(state, profile, source, problems))
-        items.extend(_archives(state, profile, source, problems))
+        pools=[state]
+        registry=Path(home)/'.config/harness-launcher/profiles'
+        if os.path.lexists(state/'profile-state.json') or os.path.lexists(state/profile/'profile-state.json'):
+            try:
+                if __package__:
+                    from .harness_session_pools import source_pools,binding_home
+                else:
+                    from harness_session_pools import source_pools,binding_home
+                base=state.parent if os.path.lexists(state/'profile-state.json') else state
+                pools=source_pools(base,source,registry)
+                for pool in pools:
+                    if os.path.lexists(pool/'profile-state.json'):binding_home(pool,source,registry)
+            except (OSError,ValueError,UnicodeError):
+                _problem(problems,profile,'profile_pool_unavailable');continue
+        owners={}
+        for pool in pools:
+            rows=[*_source_sessions(pool,profile,source,problems),*_archives(pool,profile,source,problems)]
+            for row in rows:row['state_root']=str(pool)
+            items.extend(rows)
+            for native,values in _provider_owners(pool,source,problems,profile).items():
+                owners.setdefault(native,[]).extend(values)
         items.extend(_legacy(source, profile, problems))
-        items.extend(_claude_records(profile, source, Path(home), problems, _provider_owners(state, source,problems,profile)))
+        items.extend(_claude_records(profile, source, Path(home), problems, owners))
     if len(items)>MAX_SESSIONS:_problem(problems,None,'session_count_budget')
     items = sorted(items, key=lambda item: item['id'])[:MAX_SESSIONS]
     revision = hashlib.sha256(json.dumps(items, sort_keys=True, separators=(',', ':')).encode()).hexdigest()

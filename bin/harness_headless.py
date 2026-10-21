@@ -42,7 +42,8 @@ SESSION_LINE = re.compile(r'^harness-launcher: isolated session (' + UUID + r');
 # (API keys, bot tokens, ...) is dropped before anything is launched.
 ENV_ALLOW = ('HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'LANG')
 # Launcher state location only, so `harness-session` sees the same sessions.
-ENV_LAUNCHER = ('HARNESS_SESSION_STATE_HOME', 'XDG_STATE_HOME', 'HARNESS_SESSION_RETENTION_SECONDS')
+ENV_LAUNCHER = ('HARNESS_SESSION_STATE_HOME', 'XDG_STATE_HOME', 'HARNESS_SESSION_RETENTION_SECONDS',
+                'HARNESS_SESSION_POOL_BASE', 'HARNESS_SESSION_LAYOUT')
 HOME_DENY = ('.hermes', 'buzz', '.ssh', '.config/gh', '.aws', '.claude')
 # Edit-tool denies only (persistence vectors that are not secrets).
 HOME_WRITE_DENY = ('Library/LaunchAgents',)
@@ -958,6 +959,10 @@ def run(args, result, run_tmp):
             raise Refused('--settings-file must contain a JSON object')
         validate_caller(caller)
     env = child_env(run_tmp)
+    if env.get('HARNESS_SESSION_LAYOUT') == 'profiles-v1':
+        from harness_session_pools import initialize_pool
+        try:env['HARNESS_SESSION_STATE_HOME']=str(initialize_pool(Path(env['HARNESS_SESSION_POOL_BASE']),hdir))
+        except (KeyError,OSError,ValueError) as exc:raise Refused('profile pool unavailable: '+str(exc))
     state = state_home(env)
     log_path = args.result_file + '.log'
     with open(log_path, 'w') as log, tempfile.TemporaryFile('w+') as stdin:

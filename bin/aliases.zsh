@@ -266,6 +266,7 @@ _harness_launcher_codex_history_select() {
   state="${HARNESS_SESSION_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher}"
   # An exact id needs only its own row; the full catalog dedupes every home.
   [[ "$mode" =~ $_HARNESS_LAUNCHER_UUID_RE ]] && scope=(--native-id "${(L)mode}")
+  [[ -z "${HARNESS_SESSION_POOL_BASE:-}" ]] || scope+=(--pool-base "$HARNESS_SESSION_POOL_BASE")
   output="$("$py" -I "$helper" catalog --source-root "$source_root" --state-home "$state" \
     --legacy-state-home "${XDG_STATE_HOME:-$HOME/.local/state}/harness-launcher" "${scope[@]}")" || return $?
   if [[ "$mode" == list ]]; then
@@ -544,6 +545,9 @@ _harness_launcher_codex_import_origin() {
   local matches=0
   [[ "${row_origin:A}" == "${current:A}" ]] && matches=1
   [[ "${row_origin:A}" == "${legacy:A}" && "${legacy:A}" != "${current:A}" ]] && matches=1
+  # The re-selected catalog validates the registered source profile and admits
+  # its shared original pool explicitly. An environment origin is never used.
+  [[ -n "${HARNESS_SESSION_POOL_BASE:-}" && "${row_origin:A}" == "${HARNESS_SESSION_POOL_BASE:A}" ]] && matches=1
   (( matches == 1 )) || return 1
   print -r -- "$row_origin $row_isolation"
 }
@@ -1844,9 +1848,6 @@ _harness_launcher_run() {
         $orca_resume && echo "harness-launcher: could not restore isolated session $requested_session_id" >&2
         return "$resume_rc"
       }
-      if ! harness_claude_stdio_is_tty; then
-        HARNESS_HISTORY_SOURCE_ROOT="$source_root" "$_HARNESS_LAUNCHER_BIN/session-isolation.sh" gc >/dev/null 2>&1 || echo 'harness-launcher: warning: isolated-session GC failed; workspaces retained' >&2
-      fi
       _harness_launcher_isolated_session_create "$source_root" "$requested_session_id" || {
         local resume_rc=$?
         zsystem flock -u "$HARNESS_SESSION_LEASE_FD" 2>/dev/null || true
@@ -1854,11 +1855,8 @@ _harness_launcher_run() {
         return "$resume_rc"
       }
     else
-      # Do not make a new interactive start wait on retention collection.
-      # Noninteractive launches retain the legacy best-effort maintenance.
-      if ! harness_claude_stdio_is_tty; then
-        HARNESS_HISTORY_SOURCE_ROOT="$source_root" "$_HARNESS_LAUNCHER_BIN/session-isolation.sh" gc >/dev/null 2>&1 || echo 'harness-launcher: warning: isolated-session GC failed; workspaces retained' >&2
-      fi
+      # Explicit GC or the approved scheduled maintainer owns retirement.
+      # Starting any agent never waits for a whole-pool GC pass.
       if $history_local_create; then
         _harness_launcher_isolated_session_create "$source_root" "" local || return $?
       else

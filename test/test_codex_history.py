@@ -68,7 +68,7 @@ class CodexHistoryTest(unittest.TestCase):
             + "\n" + json.dumps({"id": PARENT_THREAD_ID, "path": "archived_sessions/2026/10/09/rollout-2026-10-09T01-02-03-" + PARENT_THREAD_ID + ".jsonl"}) + "\n")
         (current / ("rollout-2026-10-10T01-02-03-" + NATIVE_THREAD_ID + ".jsonl")).write_text(
             json.dumps({"timestamp": "2026-10-10T01:02:03Z", "type": "session_meta", "payload": {
-                "id": NATIVE_THREAD_ID, "history_base": {"thread_id": PARENT_THREAD_ID}, "cwd": "/fixture"}}) + "\n")
+                "id": NATIVE_THREAD_ID, "cwd": "/fixture"}}) + "\n")
         (current / ("rollout-2026-10-10T01-02-03-" + NATIVE_THREAD_ID + "_0001.jsonl")).write_text('{"type":"response_item","id":"segment"}\n')
         (archived / ("rollout-2026-10-09T01-02-03-" + PARENT_THREAD_ID + ".jsonl")).write_text('{"type":"response_item","id":"parent"}\n')
         for name in ("logs_2", "goals_1", "memories_1", "queue_1", "shell_snapshots", "generated_images", "attachments"):
@@ -130,6 +130,52 @@ class CodexHistoryTest(unittest.TestCase):
             "snapshot", "--source", str(self.home), "--catalog", str(self.catalog), "--receipt", str(self.receipt),
             "--source-root", str(self.source_root), "--isolation-id", ISOLATION_ID,
             "--runtime-revision", RUNTIME_REVISION, *extra, expected=expected)
+
+    def test_selected_restore_does_not_clone_other_threads_or_native_databases(self):
+        """A selected resume must not materialize the entire canonical HOME."""
+        unrelated = self.home / 'sessions/2026/10/10/rollout-2026-10-10T01-02-03-00000000-1111-4222-8333-444444444444.jsonl'
+        unrelated.write_text('{"type":"response_item","id":"unrelated"}\n')
+        (self.home/'external_agent_session_imports.json').write_text('{"imported_threads":["fixture"]}\n')
+        receipt = json.loads(self.snapshot().stdout)
+        restored = self.base / 'selected-home'
+        self.run_history('restore', '--catalog', str(self.catalog), '--snapshot', receipt['snapshot_id'],
+                         '--destination', str(restored), '--receipt', str(self.base/'selected-receipt.json'),
+                         '--native-id', NATIVE_THREAD_ID)
+        self.assertFalse((restored / unrelated.relative_to(self.home)).exists())
+        self.assertFalse(list(restored.glob('*.sqlite*')))
+        self.assertFalse((restored/'history.jsonl').exists())
+        self.assertFalse((restored/'session_index.jsonl').exists())
+        self.assertTrue(list(restored.rglob('*'+NATIVE_THREAD_ID+'*.jsonl')))
+        self.assertFalse(list(restored.rglob('*'+PARENT_THREAD_ID+'*.jsonl')))
+        self.assertTrue(list(restored.rglob('*'+NATIVE_THREAD_ID+'_0001.jsonl')))
+        self.assertEqual((restored/'attachments/native-data').read_text(), 'attachments\n')
+        self.assertEqual((restored/'external_agent_session_imports.json').read_text(), '{"imported_threads":["fixture"]}\n')
+        self.assertTrue((self.catalog/'snapshots'/receipt['snapshot_id']/'data'/unrelated.relative_to(self.home)).is_file())
+
+    def test_missing_selected_uuid_refuses_before_creating_restore_destination(self):
+        receipt = json.loads(self.snapshot().stdout)
+        destination = self.base/'absent-native'
+        self.run_history('restore', '--catalog', str(self.catalog), '--snapshot', receipt['snapshot_id'],
+                         '--destination', str(destination), '--receipt', str(self.base/'missing.json'),
+                         '--native-id', '00000000-1111-4222-8333-444444444444', expected=2)
+        self.assertFalse(destination.exists())
+
+    def test_selected_restore_refuses_parent_projection_before_creating_destination(self):
+        physical='00000000-1111-4222-8333-444444444444'
+        parent_physical='12345678-1111-4222-8333-444444444444'
+        parent_logical='87654321-1111-4222-8333-444444444444'
+        reverted=self.home/'sessions/2026/10/10'/('rollout-2026-10-10T01-02-04-'+NATIVE_THREAD_ID+'_'+physical+'.jsonl')
+        reverted.write_text(json.dumps({'type':'session_meta','payload':{'id':NATIVE_THREAD_ID,
+            'history_base':{'thread_id':parent_physical}}})+'\n')
+        parent=reverted.with_name('rollout-2026-10-10T01-02-05-'+parent_logical+'_'+parent_physical+'.jsonl')
+        parent.write_text(json.dumps({'type':'session_meta','payload':{'id':parent_logical}})+'\n')
+        with sqlite3.connect(self.home/'state_5.sqlite') as database:
+            database.execute('UPDATE threads SET rollout_path=? WHERE id=?',(str(reverted),NATIVE_THREAD_ID))
+        receipt=json.loads(self.snapshot().stdout);destination=self.base/'reverted-restore'
+        self.run_history('restore','--catalog',str(self.catalog),'--snapshot',receipt['snapshot_id'],
+            '--destination',str(destination),'--receipt',str(self.base/'reverted.json'),'--native-id',NATIVE_THREAD_ID,expected=2)
+        self.assertFalse(destination.exists())
+        self.assertTrue((self.catalog/'snapshots'/receipt['snapshot_id']/'data'/reverted.relative_to(self.home)).is_file())
 
     def test_snapshot_restore_preserves_native_history_without_authority(self):
         source_before = digest_tree(self.home)
@@ -510,6 +556,26 @@ class CodexHistoryTest(unittest.TestCase):
         self.run_history("snapshot", "--source", str(root / ".harness/codex"), "--catalog", str(state / "native-history"),
                          "--receipt", str(record / "receipt.json"), "--source-root", str(self.source_root),
                          "--isolation-id", identifier, "--runtime-revision", RUNTIME_REVISION, expected=2)
+
+    def test_profile_catalog_finds_shared_old_owner_with_original_state_provenance(self):
+        shared=self.base.resolve()/'session-state';current=shared/'gd';uid=ISOLATION_ID
+        root=shared/'worktrees'/uid;native=root/'.harness/codex'
+        shutil.copytree(self.home,native,symlinks=True);shutil.rmtree(self.home)
+        self._pool_record(shared,uid,self.source_root.resolve())
+        registry=self.base/'.config/harness-launcher/profiles';registry.mkdir(parents=True)
+        (self.source_root/'config').mkdir();(self.source_root/'config/launcher.env').write_text('fixture')
+        (registry/'gd').write_text(str(self.source_root)+'\n')
+        with mock.patch.dict(os.environ,HOME=str(self.base.resolve())):
+            value=json.loads(self.run_history('catalog','--source-root',str(self.source_root.resolve()),
+                '--state-home',str(current),'--pool-base',str(shared)).stdout)
+        row=next(r for r in value['entries'] if r['native_id']==NATIVE_THREAD_ID)
+        self.assertEqual(row['home'],str(native))
+        self.assertEqual(row['origin_state_home'],str(shared))
+        self.assertEqual(row['isolation_id'],uid)
+        with mock.patch.dict(os.environ,HOME=str(self.base.resolve())):
+            self.run_history('catalog','--source-root',str(self.source_root.resolve()),
+                '--state-home',str(self.base.resolve()/'foreign-current'),
+                '--pool-base',str(shared),expected=2)
 
     def test_legacy_state_catalog_and_prepare_preserve_selected_archive(self):
         legacy = self.base / "legacy-state"; identifier = "11111111-2222-4333-8444-555555555556"

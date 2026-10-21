@@ -14,6 +14,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bin'))
 
 
 class SessionCatalogTest(unittest.TestCase):
+    def test_registered_profile_pool_and_old_shared_owner_are_both_visible(self):
+        from harness_session_catalog import catalog
+        from harness_session_pools import initialize_pool
+        with tempfile.TemporaryDirectory() as tmp:
+            base=Path(tmp).resolve();state=base/'state';source=base/'source';home=base/'home'
+            (source/'config').mkdir(parents=True);(source/'config/launcher.env').write_text('fixture')
+            registry=home/'.config/harness-launcher/profiles';registry.mkdir(parents=True)
+            (registry/'demo').write_text(str(source)+'\n')
+            profile=initialize_pool(state,source,registry)
+            for pool,owner,native in [(state,'11111111-2222-4333-8444-555555555555','aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
+                                      (profile,'22222222-2222-4333-8444-555555555555','bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee')]:
+                root=pool/'worktrees'/owner;raw=root/'.harness/codex/sessions'/(native+'.jsonl');raw.parent.mkdir(parents=True)
+                raw.write_text(json.dumps({'type':'session_meta','payload':{'id':native}})+'\n')
+                record=pool/'sessions'/owner;record.mkdir(parents=True)
+                (record/'source-root').write_text(str(source)+'\n');(record/'session-root').write_text(str(root)+'\n')
+                (record/'journal').write_text('state=CLOSED\nidentity=\nheartbeat=2000-01-01T00:00:00Z\n');(record/'runtime.lock').touch()
+            result=catalog(state,{'demo':source},home)
+            self.assertEqual({r['launcher_session_id'] for r in result['items']},
+                {'11111111-2222-4333-8444-555555555555','22222222-2222-4333-8444-555555555555'})
+
     def test_linked_terminal_journal_is_partial_and_never_read_as_owner(self):
         from harness_session_catalog import catalog
         owner='11111111-1111-4111-8111-111111111111';native='22222222-2222-4222-8222-222222222222'
@@ -236,7 +256,9 @@ class SessionCatalogTest(unittest.TestCase):
             live=catalog(state,{'demo':source},home)['items']
             self.assertEqual({(item['native_id'],item['launcher_session_id']) for item in live},{(parent,old),(child,new)})
             saved=archive(root=new_root,state=state,owner_id=new,source_root=source)
-            self.assertEqual(len(list((saved/'codex/sessions').glob('*.jsonl'))),2)
+            self.assertEqual({p.name for p in (saved/'codex/sessions').glob('*.jsonl')},{child+'.jsonl'})
+            self.assertEqual({p.name for p in (state/'native-history/snapshots'/snapshot/'data/sessions').glob('*.jsonl')},
+                             {parent+'.jsonl',child+'.jsonl'})
             shutil.rmtree(new_root);receipt.unlink()
             archived=catalog(state,{'demo':source},home)['items']
             self.assertEqual({(item['native_id'],item['launcher_session_id']) for item in archived},{(parent,old),(child,new)})

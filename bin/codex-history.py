@@ -19,6 +19,9 @@ import tempfile
 import uuid
 import functools
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness_file_clone import clone_from_fd
+
 
 FILE_NAMES = {"history.jsonl", "session_index.jsonl", "external_agent_session_imports.json"}
 DIRECTORIES = {"sessions", "archived_sessions", "logs_2", "goals_1", "memories_1",
@@ -101,6 +104,15 @@ def native_presence(path, anchor):
 
 def presence(args):
     print('native' if native_presence(Path(args.source), Path(args.anchor)) else 'absent')
+
+
+def content_kind(args):
+    source=Path(args.source)
+    if not native_presence(source,Path(args.anchor)):
+        print('absent');return
+    # Unknown entries refuse here. A generated-only HOME has no included
+    # payload at all, rather than a guessed empty thread count.
+    print('native' if source_children(source) else 'generated')
 
 
 def secure_dir(path):
@@ -321,7 +333,10 @@ def copy_regular(source, destination):
     metadata=source.stat()
     destination.parent.mkdir(parents=True, exist_ok=True)
     mode(destination.parent, 0o700)
-    shutil.copyfile(source, destination)
+    with source.open('rb') as incoming:
+        if not clone_from_fd(incoming.fileno(), destination):
+            with destination.open('xb') as outgoing:
+                shutil.copyfileobj(incoming, outgoing)
     os.utime(destination,ns=(metadata.st_atime_ns,metadata.st_mtime_ns))
     mode(destination, 0o600)
 
@@ -589,18 +604,105 @@ def relocate_state(database, source_home, destination):
     mode(database, 0o600)
 
 
+def selected_restore_files(data, native_id, manifest):
+    """Restore a committed physical rollout whose projection can be rebuilt.
+
+    For reverted threads SQLite is the cutover authority. Inactive physical
+    rollouts stay in the full snapshot; exposing them to a fresh index could
+    choose an uncommitted revert. Parent projections currently refuse restore.
+    Never copy the source database to a new owner.
+    """
+    if not UUID.fullmatch(native_id):
+        refuse('invalid native UUID')
+    uid = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+    pattern = re.compile(r'^(?:rollout-.*?)?('+uid+r')(?:_('+uid+r'))?(?:_([0-9]+))?\.jsonl$', re.I)
+    files = [p for p in sorted(data.rglob('*')) if p.is_file()]
+    logical, physical, parents, metadata_ids = {}, {}, {}, {}
+    for path in files:
+        if path.relative_to(data).parts[0] not in ('sessions', 'archived_sessions'):
+            continue
+        match = pattern.fullmatch(path.name)
+        if not match:
+            refuse('unknown Native rollout filename')
+        thread, rollout = match[1].lower(), (match[2] or match[1]).lower()
+        logical.setdefault(thread, set()).add(rollout)
+        physical.setdefault(rollout, []).append(path)
+        if rollout in metadata_ids and metadata_ids[rollout] != thread:
+            refuse('ambiguous physical Native rollout')
+        metadata_ids[rollout] = thread
+        with path.open('rb') as stream:
+            first = stream.readline(1048577)
+        if len(first) > 1048576:
+            refuse('native metadata exceeds restore limit')
+        try:event = json.loads(first)
+        except (ValueError, UnicodeError):refuse('invalid native restore metadata')
+        if not isinstance(event, dict):refuse('invalid native restore metadata')
+        if event.get('type') != 'session_meta':
+            continue
+        payload = event.get('payload', {})
+        if not isinstance(payload, dict) or str(payload.get('id', '')).lower() != thread:
+            refuse('native metadata identity mismatch')
+        base = payload.get('history_base')
+        parent = base.get('thread_id') if isinstance(base, dict) else None
+        if parent is not None and (not isinstance(parent, str) or not UUID.fullmatch(parent)):
+            refuse('invalid native parent identity')
+        if rollout in parents and parents[rollout] != parent:
+            refuse('conflicting physical Native metadata')
+        parents[rollout] = parent.lower() if parent else None
+
+    candidates = logical.get(native_id.lower(), set())
+    if not candidates:
+        refuse('selected native history is absent')
+    if len(candidates) == 1:
+        active = next(iter(candidates))
+    else:
+        # Snapshot databases are materialized through SQLite backup and have no
+        # live WAL. Read without repair, journal creation, or source mutations.
+        from urllib.parse import quote
+        database = data/'state_5.sqlite'
+        try:
+            connection = sqlite3.connect('file:'+quote(str(database))+'?mode=ro&immutable=1', uri=True)
+            try:rows = connection.execute('SELECT rollout_path FROM threads WHERE id=?', (native_id,)).fetchall()
+            finally:connection.close()
+            if len(rows) != 1 or not isinstance(rows[0][0], str):raise ValueError()
+            relative = Path(rows[0][0]).relative_to(Path(manifest['source']))
+            current = data/relative
+            matching = [identifier for identifier in candidates if current in physical[identifier]]
+            if len(matching) != 1:raise ValueError()
+            active = matching[0]
+        except (sqlite3.Error, ValueError, KeyError, OSError):
+            refuse('selected physical Native pointer is unverified')
+    pending, selected, visited = [active], [], set()
+    while pending:
+        rollout = pending.pop()
+        if rollout in visited:continue
+        visited.add(rollout)
+        if rollout not in physical:refuse('Native physical parent is absent')
+        if parents.get(rollout):
+            # Characterized Native 0.163 fails to reconstruct inherited
+            # projected items from raw-only history_base parents. Preserve the
+            # original full snapshot; never present a silently shortened resume.
+            refuse('Native parent projection requires a characterized restore')
+        selected.extend(physical[rollout])
+        if parents.get(rollout):pending.append(parents[rollout])
+    selected.extend(p for p in files if p.relative_to(data).parts[0] in
+                    ('attachments', 'generated_images', 'shell_snapshots', 'external_agent_session_imports.json'))
+    return sorted(set(selected))
+
+
 def restore(args):
     root, manifest = load_snapshot(args.catalog, args.snapshot)
+    data = root / "data"
+    if inventory(data) != manifest.get("archive_inventory"):
+        refuse("archived content hash mismatch")
+    selected = selected_restore_files(data, args.native_id, manifest) if args.native_id else None
     destination = Path(args.destination)
     if destination.exists():
         for path in destination.iterdir():
             if not excluded(path):
                 refuse("restore destination has native or unknown data")
     secure_dir(destination)
-    data = root / "data"
-    if inventory(data) != manifest.get("archive_inventory"):
-        refuse("archived content hash mismatch")
-    for source in sorted(data.rglob("*")):
+    for source in selected if selected is not None else sorted(data.rglob("*")):
         if source.is_dir():
             continue
         relative = source.relative_to(data)
@@ -694,8 +796,17 @@ def catalog_value(args, keep_private=False):
     source = Path(args.source_root).absolute()
     current=Path(args.state_home)
     states=[current]
+    pool_base=getattr(args,'pool_base',None) or os.environ.get('HARNESS_SESSION_POOL_BASE')
+    if pool_base:
+        from harness_session_pools import source_pools, PoolError
+        try:
+            configured=source_pools(Path(pool_base),source)
+            if current not in configured:refuse('current state does not belong to configured pool base')
+            states+=configured
+        except (OSError,ValueError) as exc:refuse('invalid profile pool: '+str(exc))
     legacy=getattr(args,'legacy_state_home',None)
-    if legacy and Path(legacy)!=current:states.append(Path(legacy))
+    if legacy:states.append(Path(legacy))
+    states=list(dict.fromkeys(states))
     entries = [];warnings=[];held_ids=set();incomplete_hints=False
     for state in states:
         quarantines=[]
@@ -718,7 +829,7 @@ def catalog_value(args, keep_private=False):
         if not UUID.fullmatch(native_id):refuse("invalid selected native UUID")
         entries=[row for row in entries if row['native_id'].lower()==native_id.lower()]
     rows=dedupe_entries(entries,current/'native-history',True)
-    pools=[current]+([Path(legacy)] if legacy and Path(legacy)!=current else [])
+    pools=states
     for row in rows:
         if incomplete_hints or row['native_id'].lower() in held_ids:
             row.update(status='ambiguous',reason='unverified_native_owner_hints_incomplete' if incomplete_hints else 'unverified_native_owner')
@@ -750,13 +861,16 @@ def origin_state_home(row,source,pools,legacy):
 
 
 def binding_origin(state, identifier, source):
-    binding=state.parent/'bindings'/(identifier.lower()+'.json')
+    from harness_session_pools import binding_home
+    try:home=binding_home(state,source)
+    except (OSError,ValueError):refuse('invalid profile binding provenance')
+    binding=home/'bindings'/(identifier.lower()+'.json')
     if not binding.exists():return 'legacy-unknown'
     if not regular(binding) or stat.S_IMODE(binding.stat().st_mode)!=0o600:refuse('unsafe runtime binding')
     value=json.loads(binding.read_text(encoding='utf-8'))
     pin=value.get('runtime',{});rev=pin.get('revision','')
     if value.get('source_root')!=str(source) or not re.fullmatch('[0-9a-f]{40}',rev):refuse('runtime binding provenance mismatch')
-    runtime=state.parent/rev
+    runtime=home/rev
     if pin.get('path')!=str(runtime) or runtime.is_symlink():refuse('runtime binding path mismatch')
     manifest=runtime/'manifest.json'
     if not regular(manifest) or sha256(manifest)!=pin.get('manifest_sha256'):refuse('runtime binding manifest mismatch')
@@ -1235,6 +1349,9 @@ def parser():
     presence_parser = commands.add_parser("presence")
     for name in ("source", "anchor"):
         presence_parser.add_argument("--" + name, required=True)
+    kind_parser = commands.add_parser('content-kind')
+    for name in ('source','anchor'):
+        kind_parser.add_argument('--'+name,required=True)
     snap = commands.add_parser("snapshot")
     for name in ("source", "catalog", "receipt", "source-root", "isolation-id", "runtime-revision"):
         snap.add_argument("--" + name, required=True)
@@ -1251,6 +1368,7 @@ def parser():
     catalog_parser.add_argument("--state-home", required=True)
     catalog_parser.add_argument("--legacy-state-home")
     catalog_parser.add_argument("--native-id")
+    catalog_parser.add_argument("--pool-base")
     pool = commands.add_parser("protect-pool")
     for name in ("state-home", "source-root"):
         pool.add_argument("--" + name, required=True)
@@ -1259,6 +1377,7 @@ def parser():
     for name in ("source-root", "state-home", "native-id"):
         prepare_parser.add_argument("--" + name, required=True)
     prepare_parser.add_argument('--legacy-state-home')
+    prepare_parser.add_argument('--pool-base')
     return root
 
 
@@ -1266,7 +1385,7 @@ def main(argv):
     args = parser().parse_args(argv)
     return {"snapshot": snapshot, "restore": restore, "verify": verify,
             "catalog": catalog, "protect-pool": protect_pool, "prepare": prepare,
-            "presence": presence}[args.command](args)
+            "presence": presence, 'content-kind': content_kind}[args.command](args)
 
 
 if __name__ == "__main__":

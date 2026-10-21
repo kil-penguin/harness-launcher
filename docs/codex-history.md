@@ -36,7 +36,7 @@ rule, service or daemon.
 ## Internal interfaces
 
 `bin/codex-history.py` provides on-demand `snapshot`, `restore`, `verify`,
-`catalog`, `presence` and `protect-pool` operations; it is not a new public executable.
+`catalog`, `presence`, `content-kind` and `protect-pool` operations; it is not a new public executable.
 
 - `snapshot --source HOME --catalog STORE --receipt RECEIPT --source-root ROOT
   --isolation-id UUID --runtime-revision REV` records immutable native data,
@@ -45,10 +45,20 @@ rule, service or daemon.
 - `restore --catalog STORE --snapshot ID --destination HOME --receipt RECEIPT`
   writes native artifacts into a fresh home without overwriting existing native
   files or importing authority. Generated files may already be present.
+  With `--native-id UUID`, copy only that thread's committed raw rollout and
+  segments, associated attachments/images/shell snapshots, and external import
+  ledger. Leave databases, indexes, history lists and unrelated threads in the
+  full original snapshot. A selected thread with `history_base` is refused
+  before creating the destination: characterized Native 0.163 loses inherited
+  projected items when rebuilt from raw-only physical parents. No shortened
+  resume or silent fallback to a full HOME copy is permitted.
 - `verify --catalog STORE --snapshot ID --source SOURCE_HOME --codex-bin BIN`
   checks the saved hashes and a fresh derived restore. Original source paths
   must be inaccessible during the native full-history read. Only derived
   databases may relocate schema-known home paths; originals remain untouched.
+  Full-retirement proof currently admits characterized Native 0.161.0/0.162.1.
+  Native 0.163.0 remains held: successful ordinary raw-only resume QA alone
+  does not characterize every preserved projection or parent format.
 - `catalog --source-root ROOT --state-home STATE [--legacy-state-home STATE] [--native-id UUID]`
   reports native UUID, source/home/isolation, status, time and origin pin from
   canonical, live isolated and validated archived data. No conversation body,
@@ -84,6 +94,15 @@ rule, service or daemon.
 - `presence --source HOME --anchor STATE` returns `native` or `absent` only
   after validating accessible, owned directory ancestry. Permission errors,
   redirected paths and failed checks hold the original root or old tomb.
+- `content-kind` uses the same boundary checks, then classifies every top-level
+  entry. A HOME containing only recognized generated/runtime entries returns
+  `generated` and needs no Native probe. Any included payload returns `native`;
+  unknown artifacts refuse classification. `presence` retains its old meaning.
+
+Snapshot/archive copies use private APFS copy-on-write clones when supported,
+otherwise a safe copy. They never hardlink mutable data. Full original Native
+snapshots and raw archives are retained indefinitely; transcript backup alone
+cannot authorize deleting a Native snapshot or a unique store.
 
 ## Retirement and recovery
 
